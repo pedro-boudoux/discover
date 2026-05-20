@@ -16,7 +16,7 @@ def get_rejected_embeddings(seed_track_id: str) -> list:
             )
         """, (seed_track_id,))
         results = cursor.fetchall()
-        return [list(row["embedding"]) for row in results if row["embedding"]]
+        return [list(row["embedding"]) for row in results if row["embedding"] is not None]
 
 
 def apply_steering(base_embedding: list, seed_track_id: str) -> list:

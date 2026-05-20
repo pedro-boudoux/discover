@@ -50,7 +50,7 @@ def get_song_features(track_id: str):
         if not row:
             raise HTTPException(404, "Track not found — search for it first")
 
-        if row["embedding"]:
+        if row["embedding"] is not None:
             embedding = list(row["embedding"])
             cursor.execute("SELECT id, tag FROM tag_vocab WHERE id < %s", (EMBEDDING_DIM,))
             tags = [

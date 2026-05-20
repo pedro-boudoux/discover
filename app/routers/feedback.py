@@ -49,7 +49,7 @@ def submit_feedback(request: FeedbackRequest):
                 (request.track_id,)
             )
             song_row = cursor.fetchone()
-            if song_row and song_row["embedding"]:
+            if song_row and song_row["embedding"] is not None:
                 base_embedding = list(song_row["embedding"])
                 steered = steering.apply_steering(base_embedding, request.track_id)
 

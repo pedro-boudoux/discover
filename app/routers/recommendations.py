@@ -18,7 +18,7 @@ def get_recommendations(
             (track_id,)
         )
         row = cursor.fetchone()
-        if not row or not row["embedding"]:
+        if not row or row["embedding"] is None:
             return RecommendationsResponse(recommendations=[])
 
         base_embedding = list(row["embedding"])

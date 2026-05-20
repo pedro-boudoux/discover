@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+spotipy
+requests
+numpy
+scikit-learn
+psycopg2-binary
+python-dotenv
+pydantic

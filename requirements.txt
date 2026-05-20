@@ -1,9 +1,9 @@
 fastapi
 uvicorn
-spotipy
 requests
 numpy
 scikit-learn
 psycopg2-binary
+pgvector
 python-dotenv
 pydantic

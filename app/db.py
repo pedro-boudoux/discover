@@ -1,11 +1,14 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
+from pgvector.psycopg2 import register_vector
 from app.config import DATABASE_URL, EMBEDDING_DIM
 
 
 def get_connection():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    register_vector(conn)
+    return conn
 
 
 @contextmanager

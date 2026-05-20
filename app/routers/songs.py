@@ -19,9 +19,9 @@ def search_songs(q: str = Query(..., min_length=1)):
     with get_cursor() as cursor:
         for t in results:
             cursor.execute("""
-                INSERT INTO songs (spotify_id, name, artist, image)
+                INSERT INTO songs (track_id, name, artist, image)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (spotify_id) DO UPDATE SET
+                ON CONFLICT (track_id) DO UPDATE SET
                     name = EXCLUDED.name,
                     artist = EXCLUDED.artist,
                     image = EXCLUDED.image
@@ -29,7 +29,7 @@ def search_songs(q: str = Query(..., min_length=1)):
 
     return [
         SongSearchResult(
-            spotify_id=t["track_id"],
+            track_id=t["track_id"],
             name=t["name"],
             artist=t["artist"],
             image=t["image"]
@@ -38,12 +38,12 @@ def search_songs(q: str = Query(..., min_length=1)):
     ]
 
 
-@router.get("/{spotify_id}/features", response_model=TrackFeatures)
-def get_song_features(spotify_id: str):
+@router.get("/{track_id}/features", response_model=TrackFeatures)
+def get_song_features(track_id: str):
     with get_cursor() as cursor:
         cursor.execute(
-            "SELECT name, artist, listeners, embedding FROM songs WHERE spotify_id = %s",
-            (spotify_id,)
+            "SELECT name, artist, listeners, embedding FROM songs WHERE track_id = %s",
+            (track_id,)
         )
         row = cursor.fetchone()
 
@@ -58,7 +58,7 @@ def get_song_features(spotify_id: str):
                 if r["id"] < len(embedding) and embedding[r["id"]] > 0
             ]
             return TrackFeatures(
-                spotify_id=spotify_id,
+                track_id=track_id,
                 name=row["name"],
                 artist=row["artist"],
                 listeners=row["listeners"] or 0,
@@ -77,11 +77,11 @@ def get_song_features(spotify_id: str):
 
     with get_cursor() as cursor:
         cursor.execute("""
-            UPDATE songs SET listeners = %s, embedding = %s WHERE spotify_id = %s
-        """, (lastfm_track["listeners"], vector, spotify_id))
+            UPDATE songs SET listeners = %s, embedding = %s WHERE track_id = %s
+        """, (lastfm_track["listeners"], vector, track_id))
 
     return TrackFeatures(
-        spotify_id=spotify_id,
+        track_id=track_id,
         name=name,
         artist=artist,
         listeners=lastfm_track["listeners"],

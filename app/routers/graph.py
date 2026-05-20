@@ -11,13 +11,13 @@ router = APIRouter(prefix="/graph", tags=["graph"])
 def get_graph():
     with get_cursor() as cursor:
         cursor.execute("""
-            SELECT s.spotify_id, s.name, s.artist, s.listeners, gn.is_seed
+            SELECT s.track_id, s.name, s.artist, s.listeners, gn.is_seed
             FROM graph_nodes gn
-            JOIN songs s ON gn.spotify_id = s.spotify_id
+            JOIN songs s ON gn.track_id = s.track_id
         """)
         nodes = [
             GraphNode(
-                spotify_id=row["spotify_id"],
+                track_id=row["track_id"],
                 name=row["name"],
                 artist=row["artist"],
                 is_seed=row["is_seed"],
@@ -43,8 +43,8 @@ def get_graph():
 def add_seed(request: SeedRequest):
     with get_cursor() as cursor:
         cursor.execute(
-            "SELECT name, artist FROM songs WHERE spotify_id = %s",
-            (request.spotify_id,)
+            "SELECT name, artist FROM songs WHERE track_id = %s",
+            (request.track_id,)
         )
         row = cursor.fetchone()
         if not row:
@@ -66,33 +66,31 @@ def add_seed(request: SeedRequest):
 
     with get_cursor() as cursor:
         cursor.execute("""
-            UPDATE songs SET listeners = %s, embedding = %s WHERE spotify_id = %s
-        """, (lastfm_track["listeners"], vector, request.spotify_id))
+            UPDATE songs SET listeners = %s, embedding = %s WHERE track_id = %s
+        """, (lastfm_track["listeners"], vector, request.track_id))
 
         cursor.execute("""
-            INSERT INTO graph_nodes (spotify_id, is_seed)
+            INSERT INTO graph_nodes (track_id, is_seed)
             VALUES (%s, true)
-            ON CONFLICT (spotify_id) DO UPDATE SET is_seed = true
-        """, (request.spotify_id,))
+            ON CONFLICT (track_id) DO UPDATE SET is_seed = true
+        """, (request.track_id,))
 
-    # ANN search for existing candidates
     with get_cursor() as cursor:
         cursor.execute("""
-            SELECT spotify_id, name, artist, listeners, image,
+            SELECT track_id, name, artist, listeners, image,
                    1 - (embedding <=> %s::vector) AS similarity
             FROM songs
             WHERE embedding IS NOT NULL
             AND listeners < %s
-            AND spotify_id != %s
+            AND track_id != %s
             ORDER BY embedding <=> %s::vector
             LIMIT %s
-        """, (vector, MAX_LISTENERS, request.spotify_id, vector, DEFAULT_K))
+        """, (vector, MAX_LISTENERS, request.track_id, vector, DEFAULT_K))
         candidates = [dict(r) for r in cursor.fetchall()]
 
-    # Cold-start: supplement from Last.fm similar tracks when DB is sparse
     if len(candidates) < DEFAULT_K:
         similar = lastfm.get_similar_tracks(artist, name, limit=DEFAULT_K)
-        seen_ids = {c["spotify_id"] for c in candidates} | {request.spotify_id}
+        seen_ids = {c["track_id"] for c in candidates} | {request.track_id}
 
         for sim in similar:
             if len(candidates) >= DEFAULT_K:
@@ -113,20 +111,19 @@ def add_seed(request: SeedRequest):
 
                 with get_cursor() as cursor:
                     cursor.execute("""
-                        INSERT INTO songs (spotify_id, name, artist, listeners, embedding)
+                        INSERT INTO songs (track_id, name, artist, listeners, embedding)
                         VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (spotify_id) DO UPDATE SET
+                        ON CONFLICT (track_id) DO UPDATE SET
                             listeners = EXCLUDED.listeners,
                             embedding = EXCLUDED.embedding
                     """, (sim_id, sim["name"], sim["artist"], sim_lastfm["listeners"], sim_vector))
 
                 similarity = embeddings.cosine_similarity(vector, sim_vector)
-                candidates.append({"spotify_id": sim_id, "similarity": similarity})
+                candidates.append({"track_id": sim_id, "similarity": similarity})
                 seen_ids.add(sim_id)
             except Exception:
                 continue
 
-    # Write edges for all candidates
     if candidates:
         with get_cursor() as cursor:
             for c in candidates:
@@ -134,6 +131,6 @@ def add_seed(request: SeedRequest):
                     INSERT INTO graph_edges (source_id, target_id, similarity)
                     VALUES (%s, %s, %s)
                     ON CONFLICT (source_id, target_id) DO UPDATE SET similarity = EXCLUDED.similarity
-                """, (request.spotify_id, c["spotify_id"], c["similarity"]))
+                """, (request.track_id, c["track_id"], c["similarity"]))
 
-    return {"spotify_id": request.spotify_id, "name": name, "artist": artist}
+    return {"track_id": request.track_id, "name": name, "artist": artist}

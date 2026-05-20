@@ -3,18 +3,18 @@ from typing import Optional
 
 
 class SongSearchResult(BaseModel):
-    spotify_id: str
+    track_id: str
     name: str
     artist: str
     image: Optional[str] = None
 
 
 class SeedRequest(BaseModel):
-    spotify_id: str
+    track_id: str
 
 
 class GraphNode(BaseModel):
-    spotify_id: str
+    track_id: str
     name: str
     artist: str
     is_seed: bool = False
@@ -33,7 +33,7 @@ class GraphResponse(BaseModel):
 
 
 class Recommendation(BaseModel):
-    spotify_id: str
+    track_id: str
     name: str
     artist: str
     similarity: float
@@ -46,7 +46,7 @@ class RecommendationsResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    spotify_id: str
+    track_id: str
     action: str
 
 
@@ -56,7 +56,7 @@ class FeedbackResponse(BaseModel):
 
 
 class TrackFeatures(BaseModel):
-    spotify_id: str
+    track_id: str
     name: str
     artist: str
     listeners: int

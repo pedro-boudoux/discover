@@ -3,25 +3,25 @@ from app.db import get_cursor
 from app.config import STEERING_ALPHA
 
 
-def get_rejected_embeddings(seed_spotify_id: str) -> list:
+def get_rejected_embeddings(seed_track_id: str) -> list:
     with get_cursor() as cursor:
         cursor.execute("""
             SELECT s.embedding
             FROM feedback f
-            JOIN songs s ON f.spotify_id = s.spotify_id
+            JOIN songs s ON f.track_id = s.track_id
             WHERE f.action = 'reject'
             AND EXISTS (
                 SELECT 1 FROM graph_edges ge
-                WHERE ge.source_id = %s AND ge.target_id = f.spotify_id
+                WHERE ge.source_id = %s AND ge.target_id = f.track_id
             )
-        """, (seed_spotify_id,))
+        """, (seed_track_id,))
         results = cursor.fetchall()
         return [list(row["embedding"]) for row in results if row["embedding"]]
 
 
-def apply_steering(base_embedding: list, seed_spotify_id: str) -> list:
+def apply_steering(base_embedding: list, seed_track_id: str) -> list:
     base = np.array(base_embedding)
-    rejected = get_rejected_embeddings(seed_spotify_id)
+    rejected = get_rejected_embeddings(seed_track_id)
 
     if not rejected:
         return base.tolist()

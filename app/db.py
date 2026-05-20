@@ -23,6 +23,15 @@ def get_cursor():
         conn.close()
 
 
+def _try(sql):
+    """Run a DDL statement in its own transaction, silently ignoring errors."""
+    try:
+        with get_cursor() as cursor:
+            cursor.execute(sql)
+    except Exception:
+        pass
+
+
 def init_db():
     with get_cursor() as cursor:
         cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
@@ -38,25 +47,6 @@ def init_db():
                 embedding  vector({EMBEDDING_DIM}),
                 created_at TIMESTAMPTZ DEFAULT now()
             )
-        """)
-
-        # Migrate existing installs that used spotify_id
-        cursor.execute("""
-            DO $$ BEGIN
-                IF EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'songs' AND column_name = 'spotify_id'
-                ) THEN
-                    ALTER TABLE songs RENAME COLUMN spotify_id TO track_id;
-                END IF;
-            END $$
-        """)
-
-        cursor.execute("ALTER TABLE songs ADD COLUMN IF NOT EXISTS image TEXT")
-
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_songs_embedding
-            ON songs USING hnsw (embedding vector_cosine_ops)
         """)
 
         cursor.execute("""
@@ -76,17 +66,6 @@ def init_db():
         """)
 
         cursor.execute("""
-            DO $$ BEGIN
-                IF EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'graph_nodes' AND column_name = 'spotify_id'
-                ) THEN
-                    ALTER TABLE graph_nodes RENAME COLUMN spotify_id TO track_id;
-                END IF;
-            END $$
-        """)
-
-        cursor.execute("""
             CREATE TABLE IF NOT EXISTS graph_edges (
                 id         SERIAL PRIMARY KEY,
                 source_id  TEXT REFERENCES songs(track_id),
@@ -94,11 +73,6 @@ def init_db():
                 similarity FLOAT,
                 created_at TIMESTAMPTZ DEFAULT now()
             )
-        """)
-
-        cursor.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_source_target
-            ON graph_edges(source_id, target_id)
         """)
 
         cursor.execute("""
@@ -110,13 +84,14 @@ def init_db():
             )
         """)
 
-        cursor.execute("""
-            DO $$ BEGIN
-                IF EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'feedback' AND column_name = 'spotify_id'
-                ) THEN
-                    ALTER TABLE feedback RENAME COLUMN spotify_id TO track_id;
-                END IF;
-            END $$
-        """)
+    # Migrations — each runs in its own transaction so one failure doesn't block the rest
+    _try("ALTER TABLE songs RENAME COLUMN spotify_id TO track_id")
+    _try("ALTER TABLE graph_nodes RENAME COLUMN spotify_id TO track_id")
+    _try("ALTER TABLE feedback RENAME COLUMN spotify_id TO track_id")
+    _try("ALTER TABLE songs ADD COLUMN IF NOT EXISTS image TEXT")
+
+    # Ensure unique constraints and indexes exist regardless of how the table was created
+    _try("CREATE UNIQUE INDEX IF NOT EXISTS songs_track_id_unique ON songs(track_id)")
+    _try("CREATE UNIQUE INDEX IF NOT EXISTS graph_nodes_track_id_unique ON graph_nodes(track_id)")
+    _try("CREATE INDEX IF NOT EXISTS idx_songs_embedding ON songs USING hnsw (embedding vector_cosine_ops)")
+    _try("CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_source_target ON graph_edges(source_id, target_id)")

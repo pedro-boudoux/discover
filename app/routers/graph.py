@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from app.models import GraphResponse, GraphNode, GraphEdge, SeedRequest
 from app.db import get_cursor
-from app.services import spotify, lastfm, embeddings
+from app.services import lastfm, embeddings
 from app.config import MAX_LISTENERS, DEFAULT_K
 
 router = APIRouter(prefix="/graph", tags=["graph"])
@@ -41,30 +41,33 @@ def get_graph():
 
 @router.post("/seed")
 def add_seed(request: SeedRequest):
-    track = spotify.get_track(request.spotify_id)
-    lastfm_track = lastfm.get_track_info(track["artist"], track["name"])
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT name, artist FROM songs WHERE spotify_id = %s",
+            (request.spotify_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(404, "Track not found — search for it first")
 
+    name, artist = row["name"], row["artist"]
+
+    lastfm_track = lastfm.get_track_info(artist, name)
     if lastfm_track["listeners"] >= MAX_LISTENERS:
         raise HTTPException(
             400,
             f"Song has {lastfm_track['listeners']} listeners, exceeds underground threshold of {MAX_LISTENERS}"
         )
 
-    artist_tags = lastfm.get_artist_top_tags(track["artist"])
+    artist_tags = lastfm.get_artist_top_tags(artist)
     tag_counts = {**{t: 50 for t in lastfm_track["tags"][:5]}, **artist_tags}
     embeddings.get_or_create_tag_ids(list(tag_counts.keys()))
     vector = embeddings.build_tag_vector(tag_counts)
 
     with get_cursor() as cursor:
         cursor.execute("""
-            INSERT INTO songs (spotify_id, name, artist, listeners, image, embedding)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (spotify_id) DO UPDATE SET
-                listeners = EXCLUDED.listeners,
-                image = EXCLUDED.image,
-                embedding = EXCLUDED.embedding
-        """, (request.spotify_id, track["name"], track["artist"],
-              lastfm_track["listeners"], track["image"], vector))
+            UPDATE songs SET listeners = %s, embedding = %s WHERE spotify_id = %s
+        """, (lastfm_track["listeners"], vector, request.spotify_id))
 
         cursor.execute("""
             INSERT INTO graph_nodes (spotify_id, is_seed)
@@ -88,17 +91,14 @@ def add_seed(request: SeedRequest):
 
     # Cold-start: supplement from Last.fm similar tracks when DB is sparse
     if len(candidates) < DEFAULT_K:
-        similar = lastfm.get_similar_tracks(track["artist"], track["name"], limit=DEFAULT_K)
+        similar = lastfm.get_similar_tracks(artist, name, limit=DEFAULT_K)
         seen_ids = {c["spotify_id"] for c in candidates} | {request.spotify_id}
 
         for sim in similar:
             if len(candidates) >= DEFAULT_K:
                 break
             try:
-                results = spotify.search_songs(f"{sim['name']} {sim['artist']}", limit=1)
-                if not results:
-                    continue
-                sim_id = results[0]["spotify_id"]
+                sim_id = embeddings.make_track_id(sim["artist"], sim["name"])
                 if sim_id in seen_ids:
                     continue
 
@@ -113,20 +113,15 @@ def add_seed(request: SeedRequest):
 
                 with get_cursor() as cursor:
                     cursor.execute("""
-                        INSERT INTO songs (spotify_id, name, artist, listeners, image, embedding)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO songs (spotify_id, name, artist, listeners, embedding)
+                        VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (spotify_id) DO UPDATE SET
                             listeners = EXCLUDED.listeners,
-                            image = EXCLUDED.image,
                             embedding = EXCLUDED.embedding
-                    """, (sim_id, results[0]["name"], results[0]["artist"],
-                          sim_lastfm["listeners"], results[0]["image"], sim_vector))
+                    """, (sim_id, sim["name"], sim["artist"], sim_lastfm["listeners"], sim_vector))
 
                 similarity = embeddings.cosine_similarity(vector, sim_vector)
-                candidates.append({
-                    "spotify_id": sim_id,
-                    "similarity": similarity
-                })
+                candidates.append({"spotify_id": sim_id, "similarity": similarity})
                 seen_ids.add(sim_id)
             except Exception:
                 continue
@@ -141,4 +136,4 @@ def add_seed(request: SeedRequest):
                     ON CONFLICT (source_id, target_id) DO UPDATE SET similarity = EXCLUDED.similarity
                 """, (request.spotify_id, c["spotify_id"], c["similarity"]))
 
-    return {"spotify_id": request.spotify_id, "name": track["name"], "artist": track["artist"]}
+    return {"spotify_id": request.spotify_id, "name": name, "artist": artist}

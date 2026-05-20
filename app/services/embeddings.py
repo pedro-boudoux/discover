@@ -1,6 +1,12 @@
+import hashlib
 import numpy as np
 from app.db import get_cursor
 from app.config import EMBEDDING_DIM
+
+
+def make_track_id(artist: str, track: str) -> str:
+    key = f"{artist.strip().lower()}|||{track.strip().lower()}"
+    return hashlib.sha1(key.encode()).hexdigest()[:20]
 
 
 """

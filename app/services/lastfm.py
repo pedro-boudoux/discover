@@ -53,6 +53,23 @@ def get_artist_top_tags(artist: str) -> dict:
 """
     asks last.fm for tracks similar to a given one, ideally we want to use our vectordb but at the start we'll probably be using this a lot since our db will be quite sparse
 """
+def search_tracks(query: str, limit: int = 10) -> list:
+    data = _request("track.search", track=query, limit=limit)
+    tracks = data.get("results", {}).get("trackmatches", {}).get("track", [])
+
+    results = []
+    for t in tracks:
+        images = t.get("image", [])
+        image = next((img["#text"] for img in reversed(images) if img.get("#text")), None)
+        results.append({
+            "name": t["name"],
+            "artist": t["artist"],
+            "listeners": int(t.get("listeners", 0)),
+            "image": image
+        })
+    return results
+
+
 def get_similar_tracks(artist: str, track: str, limit: int = 10) -> list:
     data = _request("track.getSimilar", artist=artist, track=track, limit=limit)
     similar = data.get("similartracks", {}).get("track", [])

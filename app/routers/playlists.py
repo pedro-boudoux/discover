@@ -62,7 +62,7 @@ def linear_playlist(request: LinearPlaylistRequest):
         if not row or row["embedding"] is None:
             raise HTTPException(404, "Track not found or not yet embedded — seed it first")
 
-        seed_embedding = list(row["embedding"])
+        seed_embedding = [float(x) for x in row["embedding"]]
         tracks = find_neighbors(cursor, seed_embedding, {request.track_id}, request.n, request.niche)
 
     return PlaylistResponse(
@@ -82,7 +82,7 @@ def tree_playlist(request: TreePlaylistRequest):
         if not row or row["embedding"] is None:
             raise HTTPException(404, "Track not found or not yet embedded — seed it first")
 
-        seed_embedding = list(row["embedding"])
+        seed_embedding = [float(x) for x in row["embedding"]]
         playlist = []
         seen = {request.track_id}
         queue = [(request.track_id, seed_embedding, 0)]
@@ -99,7 +99,7 @@ def tree_playlist(request: TreePlaylistRequest):
                     break
                 playlist.append(neighbor)
                 seen.add(neighbor["track_id"])
-                queue.append((neighbor["track_id"], list(neighbor["embedding"]), depth + 1))
+                queue.append((neighbor["track_id"], [float(x) for x in neighbor["embedding"]], depth + 1))
 
     return PlaylistResponse(
         seed_track_id=request.track_id,

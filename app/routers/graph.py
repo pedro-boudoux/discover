@@ -54,7 +54,7 @@ def add_seed(request: SeedRequest):
 
     if row["embedding"] is not None:
         # already cached — skip all API calls
-        vector = list(row["embedding"])
+        vector = [float(x) for x in row["embedding"]]
         if row["listeners"] is not None and row["listeners"] >= MAX_LISTENERS:
             raise HTTPException(
                 400,
@@ -125,7 +125,7 @@ def add_seed(request: SeedRequest):
                     # already cached
                     if sim_row["listeners"] is not None and sim_row["listeners"] >= MAX_LISTENERS:
                         continue
-                    sim_vector = list(sim_row["embedding"])
+                    sim_vector = [float(x) for x in sim_row["embedding"]]
                 else:
                     # first time — fetch, embed, store
                     sim_lastfm = lastfm.get_track_info(sim["artist"], sim["name"])

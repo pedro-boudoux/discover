@@ -60,19 +60,9 @@ def add_seed(request: SeedRequest):
     if row["embedding"] is not None:
         # already cached — skip all API calls
         vector = [float(x) for x in row["embedding"]]
-        if row["listeners"] is not None and row["listeners"] >= MAX_LISTENERS:
-            raise HTTPException(
-                400,
-                f"Song has {row['listeners']} listeners, exceeds underground threshold of {MAX_LISTENERS}"
-            )
     else:
         # first time seeing this song — fetch everything and store it
         lastfm_track = lastfm.get_track_info(artist, name)
-        if lastfm_track["listeners"] >= MAX_LISTENERS:
-            raise HTTPException(
-                400,
-                f"Song has {lastfm_track['listeners']} listeners, exceeds underground threshold of {MAX_LISTENERS}"
-            )
 
         artist_tags = lastfm.get_artist_top_tags(artist)
         track_tags = lastfm.get_track_top_tags(artist, name)

@@ -62,3 +62,30 @@ class TrackFeatures(BaseModel):
     listeners: int
     tags: list[str]
     embedding: Optional[list[float]] = None
+
+
+class PlaylistTrack(BaseModel):
+    track_id: str
+    name: str
+    artist: str
+    similarity: float
+    listeners: int
+    image: Optional[str] = None
+
+
+class LinearPlaylistRequest(BaseModel):
+    track_id: str
+    n: int = 10
+    niche: bool = False
+
+
+class TreePlaylistRequest(BaseModel):
+    track_id: str
+    n: int = 10
+    max_depth: int = 3
+    niche: bool = False
+
+
+class PlaylistResponse(BaseModel):
+    seed_track_id: str
+    tracks: list[PlaylistTrack]

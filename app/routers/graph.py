@@ -5,6 +5,9 @@ from app.services import lastfm, embeddings
 from app.config import MAX_LISTENERS, DEFAULT_K
 
 SIMILAR_TRACK_LISTENER_CAPS = [MAX_LISTENERS, 1_000_000, 2_000_000, 10_000_000]
+SEED_SIMILAR_LIMIT = 25
+EXPANSION_DEPTH = 3
+EXPANSION_LIMIT = 10
 
 router = APIRouter(prefix="/graph", tags=["graph"])
 
@@ -104,7 +107,7 @@ def add_seed(request: SeedRequest):
         """, (vector, MAX_LISTENERS, request.track_id, vector, DEFAULT_K))
         candidates = [dict(r) for r in cursor.fetchall()]
 
-    similar = lastfm.get_similar_tracks(artist, name, limit=DEFAULT_K)
+    similar = lastfm.get_similar_tracks(artist, name, limit=SEED_SIMILAR_LIMIT)
     seen_ids = {c["track_id"] for c in candidates} | {request.track_id}
 
     def process_similar_tracks(similar_list, listener_cap):
@@ -162,7 +165,30 @@ def add_seed(request: SeedRequest):
         if added > 0:
             break
 
-    # merge ANN + getSimilar results, keep top DEFAULT_K by similarity
+    # recursive expansion: pull getSimilar from top candidates so the genre-correct pool
+    # is thick enough that BFS playlists don't drift into unrelated music when they
+    # exhaust the seed's direct edges
+    expansion_seeds = sorted(candidates, key=lambda c: c["similarity"], reverse=True)[:EXPANSION_DEPTH]
+    for cand in expansion_seeds:
+        try:
+            with get_cursor() as cursor:
+                cursor.execute(
+                    "SELECT name, artist FROM songs WHERE track_id = %s",
+                    (cand["track_id"],)
+                )
+                cand_row = cursor.fetchone()
+            if not cand_row:
+                continue
+
+            cand_similar = lastfm.get_similar_tracks(cand_row["artist"], cand_row["name"], limit=EXPANSION_LIMIT)
+            for cap in SIMILAR_TRACK_LISTENER_CAPS:
+                added = process_similar_tracks(cand_similar, cap)
+                if added > 0:
+                    break
+        except Exception:
+            continue
+
+    # merge ANN + getSimilar + expansion results, keep top DEFAULT_K by similarity
     candidates = sorted(candidates, key=lambda c: c["similarity"], reverse=True)[:DEFAULT_K]
 
     if candidates:

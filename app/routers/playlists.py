@@ -37,7 +37,7 @@ def find_neighbors(cursor, embedding, exclude_ids, k, niche):
             collected.append(r)
             excluded.add(r["track_id"])
 
-    return collected
+    return sorted(collected, key=lambda x: x["listeners"] or 0)
 
 
 def to_playlist_track(row: dict) -> PlaylistTrack:

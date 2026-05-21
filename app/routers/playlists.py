@@ -1,11 +1,42 @@
 from fastapi import APIRouter, HTTPException
 from app.models import LinearPlaylistRequest, TreePlaylistRequest, PlaylistResponse, PlaylistTrack
 from app.db import get_cursor
+from app.services import lastfm, embeddings as emb_service
 from app.config import MAX_LISTENERS
 
 router = APIRouter(prefix="/playlists", tags=["playlists"])
 
 NICHE_THRESHOLDS = [100, 1_000, 10_000, 100_000, MAX_LISTENERS]
+
+
+def embed_missing(track_ids: set):
+    if not track_ids:
+        return
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT track_id, name, artist FROM songs WHERE track_id = ANY(%s) AND embedding IS NULL",
+            (list(track_ids),)
+        )
+        unembedded = cursor.fetchall()
+
+    for row in unembedded:
+        try:
+            artist, name = row["artist"], row["name"]
+            lastfm_track = lastfm.get_track_info(artist, name)
+            artist_tags = lastfm.get_artist_top_tags(artist)
+            track_tags = lastfm.get_track_top_tags(artist, name)
+            similar_artists = lastfm.get_similar_artists(artist)
+            similar_tags = [(lastfm.get_artist_top_tags(a["artist"]), a["match"]) for a in similar_artists]
+            tag_counts = lastfm.blend_tags(artist_tags, track_tags, similar_tags)
+            emb_service.get_or_create_tag_ids(list(tag_counts.keys()))
+            vector = emb_service.build_tag_vector(tag_counts)
+            with get_cursor() as cursor:
+                cursor.execute(
+                    "UPDATE songs SET listeners = %s, embedding = %s WHERE track_id = %s",
+                    (lastfm_track["listeners"], vector, row["track_id"])
+                )
+        except Exception:
+            pass
 
 
 def get_neighborhood(cursor, track_id: str) -> set:
@@ -85,6 +116,10 @@ def linear_playlist(request: LinearPlaylistRequest):
 
         seed_embedding = [float(x) for x in row["embedding"]]
         neighborhood = get_neighborhood(cursor, request.track_id)
+
+    embed_missing(neighborhood)
+
+    with get_cursor() as cursor:
         tracks = find_neighbors(
             cursor, seed_embedding, {request.track_id},
             request.n, request.niche,
@@ -109,9 +144,12 @@ def tree_playlist(request: TreePlaylistRequest):
             raise HTTPException(404, "Track not found or not yet embedded — seed it first")
 
         seed_embedding = [float(x) for x in row["embedding"]]
-
-        # allowed set starts as the seed's direct neighbors and grows as we visit nodes
         allowed = get_neighborhood(cursor, request.track_id)
+
+    embed_missing(allowed)
+
+    with get_cursor() as cursor:
+        # allowed set starts as the seed's direct neighbors and grows as we visit nodes
 
         playlist = []
         seen = {request.track_id}

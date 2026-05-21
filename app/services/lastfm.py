@@ -70,6 +70,51 @@ def search_tracks(query: str, limit: int = 10) -> list:
     return results
 
 
+def get_track_top_tags(artist: str, track: str) -> dict:
+    data = _request("track.getTopTags", artist=artist, track=track)
+    toptags = data.get("toptags", {}).get("tag", [])
+
+    tag_counts = {}
+    for t in toptags:
+        name = t["name"].lower().strip()
+        count = int(t["count"])
+        if count > 0:
+            tag_counts[name] = count
+
+    return tag_counts
+
+
+def get_similar_artists(artist: str, limit: int = 5) -> list:
+    data = _request("artist.getSimilar", artist=artist, limit=limit)
+    similar = data.get("similarartists", {}).get("artist", [])
+    return [
+        {"artist": a["name"], "match": float(a["match"])}
+        for a in similar
+        if float(a.get("match", 0)) > 0.5
+    ]
+
+
+def blend_tags(
+    artist_tags: dict,
+    track_tags: dict,
+    similar_artist_tags: list = None,
+    artist_weight: float = 0.3,
+    similar_weight: float = 0.1
+) -> dict:
+    blended = {tag: int(count * artist_weight) for tag, count in artist_tags.items()}
+
+    if similar_artist_tags:
+        for tags, match in similar_artist_tags:
+            for tag, count in tags.items():
+                contribution = int(count * similar_weight * match)
+                blended[tag] = blended.get(tag, 0) + contribution
+
+    for tag, count in track_tags.items():
+        blended[tag] = blended.get(tag, 0) + count
+
+    return {tag: count for tag, count in blended.items() if count > 0}
+
+
 def get_similar_tracks(artist: str, track: str, limit: int = 10) -> list:
     data = _request("track.getSimilar", artist=artist, track=track, limit=limit)
     similar = data.get("similartracks", {}).get("track", [])

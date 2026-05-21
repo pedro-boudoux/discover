@@ -13,11 +13,16 @@ def get_recommendations(
     k: int = Query(default=DEFAULT_K, ge=1, le=50)
 ):
     with get_cursor() as cursor:
+
+        # gets passed song's embedding
         cursor.execute(
             "SELECT embedding FROM songs WHERE track_id = %s",
             (track_id,)
         )
         row = cursor.fetchone()
+
+        # if song somehow doesn't have an embedding we send empty recs
+        # TODO: I should make it so that this makes embeddings for said song, but I don't know how this will be used in the frontend yet so I'll wait.
         if not row or row["embedding"] is None:
             return RecommendationsResponse(recommendations=[])
 

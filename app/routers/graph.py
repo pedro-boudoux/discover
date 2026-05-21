@@ -4,6 +4,8 @@ from app.db import get_cursor
 from app.services import lastfm, embeddings
 from app.config import MAX_LISTENERS, DEFAULT_K
 
+SIMILAR_TRACK_LISTENER_CAPS = [MAX_LISTENERS, 1_000_000, 2_000_000, 10_000_000]
+
 router = APIRouter(prefix="/graph", tags=["graph"])
 
 
@@ -105,50 +107,60 @@ def add_seed(request: SeedRequest):
     similar = lastfm.get_similar_tracks(artist, name, limit=DEFAULT_K)
     seen_ids = {c["track_id"] for c in candidates} | {request.track_id}
 
-    for sim in similar:
-        try:
-            sim_id = embeddings.make_track_id(sim["artist"], sim["name"])
-            if sim_id in seen_ids:
-                continue
-
-            with get_cursor() as cursor:
-                cursor.execute(
-                    "SELECT listeners, embedding FROM songs WHERE track_id = %s",
-                    (sim_id,)
-                )
-                sim_row = cursor.fetchone()
-
-            if sim_row and sim_row["embedding"] is not None:
-                if sim_row["listeners"] is not None and sim_row["listeners"] >= MAX_LISTENERS:
+    def process_similar_tracks(similar_list, listener_cap):
+        added = 0
+        for sim in similar_list:
+            try:
+                sim_id = embeddings.make_track_id(sim["artist"], sim["name"])
+                if sim_id in seen_ids:
                     continue
-                sim_vector = [float(x) for x in sim_row["embedding"]]
-            else:
-                sim_lastfm = lastfm.get_track_info(sim["artist"], sim["name"])
-                if sim_lastfm["listeners"] >= MAX_LISTENERS:
-                    continue
-
-                sim_artist_tags = lastfm.get_artist_top_tags(sim["artist"])
-                sim_track_tags = lastfm.get_track_top_tags(sim["artist"], sim["name"])
-                sim_similar_artists = lastfm.get_similar_artists(sim["artist"])
-                sim_similar_tags = [(lastfm.get_artist_top_tags(a["artist"]), a["match"]) for a in sim_similar_artists]
-                sim_tag_counts = lastfm.blend_tags(sim_artist_tags, sim_track_tags, sim_similar_tags)
-                embeddings.get_or_create_tag_ids(list(sim_tag_counts.keys()))
-                sim_vector = embeddings.build_tag_vector(sim_tag_counts)
 
                 with get_cursor() as cursor:
-                    cursor.execute("""
-                        INSERT INTO songs (track_id, name, artist, listeners, embedding)
-                        VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (track_id) DO UPDATE SET
-                            listeners = EXCLUDED.listeners,
-                            embedding = EXCLUDED.embedding
-                    """, (sim_id, sim["name"], sim["artist"], sim_lastfm["listeners"], sim_vector))
+                    cursor.execute(
+                        "SELECT listeners, embedding FROM songs WHERE track_id = %s",
+                        (sim_id,)
+                    )
+                    sim_row = cursor.fetchone()
 
-            similarity = embeddings.cosine_similarity(vector, sim_vector)
-            candidates.append({"track_id": sim_id, "similarity": similarity})
-            seen_ids.add(sim_id)
-        except Exception:
-            continue
+                if sim_row and sim_row["embedding"] is not None:
+                    if sim_row["listeners"] is not None and sim_row["listeners"] >= listener_cap:
+                        continue
+                    sim_vector = [float(x) for x in sim_row["embedding"]]
+                else:
+                    sim_lastfm = lastfm.get_track_info(sim["artist"], sim["name"])
+                    if sim_lastfm["listeners"] >= listener_cap:
+                        continue
+
+                    sim_artist_tags = lastfm.get_artist_top_tags(sim["artist"])
+                    sim_track_tags = lastfm.get_track_top_tags(sim["artist"], sim["name"])
+                    sim_similar_artists = lastfm.get_similar_artists(sim["artist"])
+                    sim_similar_tags = [(lastfm.get_artist_top_tags(a["artist"]), a["match"]) for a in sim_similar_artists]
+                    sim_tag_counts = lastfm.blend_tags(sim_artist_tags, sim_track_tags, sim_similar_tags)
+                    embeddings.get_or_create_tag_ids(list(sim_tag_counts.keys()))
+                    sim_vector = embeddings.build_tag_vector(sim_tag_counts)
+
+                    with get_cursor() as cursor:
+                        cursor.execute("""
+                            INSERT INTO songs (track_id, name, artist, listeners, embedding)
+                            VALUES (%s, %s, %s, %s, %s)
+                            ON CONFLICT (track_id) DO UPDATE SET
+                                listeners = EXCLUDED.listeners,
+                                embedding = EXCLUDED.embedding
+                        """, (sim_id, sim["name"], sim["artist"], sim_lastfm["listeners"], sim_vector))
+
+                similarity = embeddings.cosine_similarity(vector, sim_vector)
+                candidates.append({"track_id": sim_id, "similarity": similarity})
+                seen_ids.add(sim_id)
+                added += 1
+            except Exception:
+                continue
+        return added
+
+    # try escalating listener caps until we get at least one genre-relevant candidate
+    for cap in SIMILAR_TRACK_LISTENER_CAPS:
+        added = process_similar_tracks(similar, cap)
+        if added > 0:
+            break
 
     # merge ANN + getSimilar results, keep top DEFAULT_K by similarity
     candidates = sorted(candidates, key=lambda c: c["similarity"], reverse=True)[:DEFAULT_K]

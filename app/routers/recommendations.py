@@ -3,7 +3,7 @@ from app.models import RecommendationsResponse, Recommendation
 from app.db import get_cursor
 from app.services import steering
 from app.services.embeddings import mmr_rerank
-from app.config import MAX_LISTENERS, DEFAULT_K, MMR_LAMBDA, MMR_POOL_MULTIPLIER
+from app.config import MAX_LISTENERS, DEFAULT_K, MMR_LAMBDA, MMR_POOL_MULTIPLIER, MMR_MAX_PER_ARTIST
 
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
@@ -53,7 +53,15 @@ def get_recommendations(
             for r in cursor.fetchall()
         ]
 
-    reranked = mmr_rerank(steered_embedding, pool, k, MMR_LAMBDA)
+    artist_counts: dict[str, int] = {}
+    capped_pool = []
+    for candidate in pool:
+        artist = str(candidate["artist"])
+        if artist_counts.get(artist, 0) < MMR_MAX_PER_ARTIST:
+            capped_pool.append(candidate)
+            artist_counts[artist] = artist_counts.get(artist, 0) + 1
+
+    reranked = mmr_rerank(steered_embedding, capped_pool, k, MMR_LAMBDA)
 
     recommendations = [
         Recommendation(

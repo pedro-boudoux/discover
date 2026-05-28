@@ -49,6 +49,24 @@ def search_songs(q: str = Query(..., min_length=1)):
 
 
 """
+    Lightweight status check — does this song already have an embedding cached?
+    Used by the frontend to warn the user about cold seeds (which trigger
+    multiple Last.fm calls and take much longer).
+"""
+@router.get("/{track_id}/status")
+def get_song_status(track_id: str):
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT embedding FROM songs WHERE track_id = %s",
+            (track_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {"exists": False, "cached": False}
+        return {"exists": True, "cached": row["embedding"] is not None}
+
+
+"""
     takes a {track_id} (generated in /search), returns the song with embeddings, tags, etc
 """
 @router.get("/{track_id}/features", response_model=TrackFeatures)

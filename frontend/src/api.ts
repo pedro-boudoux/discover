@@ -28,6 +28,12 @@ export function searchSongs(q: string) {
   return request<SongSearchResult[]>(`/songs/search?${params}`);
 }
 
+export function getSongStatus(track_id: string) {
+  return request<{ exists: boolean; cached: boolean }>(
+    `/songs/${track_id}/status`,
+  );
+}
+
 export function seedSong(track_id: string) {
   return request<{ track_id: string; name: string; artist: string }>(
     `/graph/seed`,

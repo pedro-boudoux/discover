@@ -11,8 +11,11 @@ import { Graph } from "./components/Graph";
 import { NodePopover } from "./components/NodePopover";
 import { SearchBar } from "./components/SearchBar";
 import type { SongNodeData } from "./components/SongNode";
-import { expandFromTrack, seedSong } from "./api";
+import { expandFromTrack, getSongStatus, seedSong } from "./api";
+import { LoadingText, Spinner } from "./components/Loader";
 import type { ExpansionParams, SongSearchResult } from "./types";
+
+type SeedingPhase = null | "checking" | "warm" | "cold";
 
 type PopoverState = {
   nodeId: string;
@@ -26,7 +29,7 @@ export default function App() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [popover, setPopover] = useState<PopoverState | null>(null);
   const [loading, setLoading] = useState(false);
-  const [seeding, setSeeding] = useState(false);
+  const [seedingPhase, setSeedingPhase] = useState<SeedingPhase>(null);
   const [error, setError] = useState<string | null>(null);
   const nodePositions = useRef(new Map<string, { x: number; y: number }>());
 
@@ -51,9 +54,18 @@ export default function App() {
 
   const handleSeed = useCallback(
     async (song: SongSearchResult) => {
-      setSeeding(true);
+      setSeedingPhase("checking");
       setError(null);
       try {
+        let cached = false;
+        try {
+          const status = await getSongStatus(song.track_id);
+          cached = status.cached;
+        } catch {
+          // status check failures shouldn't block the seed flow
+        }
+        setSeedingPhase(cached ? "warm" : "cold");
+
         await seedSong(song.track_id);
         const initialChildren = await expandFromTrack(
           song.track_id,
@@ -108,7 +120,7 @@ export default function App() {
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to seed song");
       } finally {
-        setSeeding(false);
+        setSeedingPhase(null);
       }
     },
     [placeChildrenAround, setNodes, setEdges],
@@ -212,13 +224,13 @@ export default function App() {
               onPick={handleSeed}
               placeholder="Search another song to reseed…"
             />
-            {seeding && (
-              <div className="mt-2 text-xs text-muted">Seeding new graph…</div>
+            {seedingPhase && (
+              <SeedingStatus phase={seedingPhase} className="mt-2" compact />
             )}
           </div>
         </>
       ) : (
-        <Hero onPick={handleSeed} seeding={seeding} />
+        <Hero onPick={handleSeed} seedingPhase={seedingPhase} />
       )}
 
       {popover && (
@@ -255,10 +267,10 @@ export default function App() {
 
 function Hero({
   onPick,
-  seeding,
+  seedingPhase,
 }: {
   onPick: (song: SongSearchResult) => void;
-  seeding: boolean;
+  seedingPhase: SeedingPhase;
 }) {
   return (
     <div className="h-full w-full flex flex-col items-center justify-center px-6">
@@ -272,7 +284,49 @@ function Hero({
         </p>
       </div>
       <SearchBar onPick={onPick} autoFocus />
-      {seeding && <div className="mt-4 text-sm text-muted">Building your graph…</div>}
+      {seedingPhase && <SeedingStatus phase={seedingPhase} className="mt-5" />}
+    </div>
+  );
+}
+
+function SeedingStatus({
+  phase,
+  className = "",
+  compact = false,
+}: {
+  phase: SeedingPhase;
+  className?: string;
+  compact?: boolean;
+}) {
+  if (!phase) return null;
+
+  const label =
+    phase === "checking"
+      ? "Checking song"
+      : phase === "warm"
+        ? "Building your graph"
+        : "Building your graph";
+
+  return (
+    <div className={`flex flex-col items-start gap-1 ${className}`}>
+      <div
+        className={`flex items-center gap-2 text-muted ${
+          compact ? "text-xs" : "text-sm"
+        }`}
+      >
+        <Spinner size={compact ? 12 : 14} className="text-accent" />
+        <LoadingText text={label} />
+      </div>
+      {phase === "cold" && (
+        <div
+          className={`text-amber-300/90 ${
+            compact ? "text-[11px]" : "text-xs"
+          } pl-5`}
+        >
+          First time seeing this song — fetching tags from Last.fm. This may take
+          30+ seconds.
+        </div>
+      )}
     </div>
   );
 }

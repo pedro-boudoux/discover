@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from app.models import LinearPlaylistRequest, TreePlaylistRequest, PlaylistResponse, PlaylistTrack
 from app.db import get_cursor
 from app.services import lastfm, embeddings as emb_service
+from app.services.covers import get_cover_url
 from app.config import MAX_LISTENERS
 
 router = APIRouter(prefix="/playlists", tags=["playlists"])
@@ -30,10 +31,11 @@ def embed_missing(track_ids: set):
             tag_counts = lastfm.blend_tags(artist_tags, track_tags, similar_tags)
             emb_service.get_or_create_tag_ids(list(tag_counts.keys()))
             vector = emb_service.build_tag_vector(tag_counts)
+            image = get_cover_url(artist, name)
             with get_cursor() as cursor:
                 cursor.execute(
-                    "UPDATE songs SET listeners = %s, embedding = %s WHERE track_id = %s",
-                    (lastfm_track["listeners"], vector, row["track_id"])
+                    "UPDATE songs SET listeners = %s, embedding = %s, image = COALESCE(%s, image) WHERE track_id = %s",
+                    (lastfm_track["listeners"], vector, image, row["track_id"])
                 )
         except Exception:
             pass

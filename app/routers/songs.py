@@ -1,6 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Query, HTTPException
 from app.models import SongSearchResult, TrackFeatures
 from app.services import lastfm, embeddings as emb_service
+from app.services.covers import get_cover_url, is_broken_image
 from app.db import get_cursor
 from app.config import EMBEDDING_DIM
 
@@ -24,6 +26,16 @@ def search_songs(q: str = Query(..., min_length=1)):
         t["track_id"] = track_id
         results.append(t)
 
+    # Last.fm hands back a placeholder URL for almost everything, so replace it
+    # with a real cover from Deezer / iTunes. Done in parallel so search stays snappy.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        covers = list(pool.map(lambda t: get_cover_url(t["artist"], t["name"]), results))
+    for t, cover in zip(results, covers):
+        if cover:
+            t["image"] = cover
+        elif is_broken_image(t["image"]):
+            t["image"] = None
+
     # records that the results exist by inserting them into the songs table
     with get_cursor() as cursor:
         for t in results:
@@ -46,6 +58,40 @@ def search_songs(q: str = Query(..., min_length=1)):
         )
         for t in results
     ]
+
+
+"""
+    Refresh broken / missing album-cover URLs for songs already in the DB.
+    Last.fm's placeholder hash (and any null image) gets replaced with a fresh
+    URL from the cover service.
+"""
+@router.post("/backfill-covers")
+def backfill_covers(limit: int = Query(default=200, ge=1, le=2000)):
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT track_id, name, artist FROM songs
+            WHERE image IS NULL
+               OR image LIKE %s
+            LIMIT %s
+        """, (f"%{ '2a96cbd8b46e442fc41c2b86b821562f' }%", limit))
+        rows = cursor.fetchall()
+
+    if not rows:
+        return {"checked": 0, "updated": 0}
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        covers = list(pool.map(lambda r: get_cover_url(r["artist"], r["name"]), rows))
+
+    updated = 0
+    with get_cursor() as cursor:
+        for row, cover in zip(rows, covers):
+            if cover:
+                cursor.execute(
+                    "UPDATE songs SET image = %s WHERE track_id = %s",
+                    (cover, row["track_id"]),
+                )
+                updated += 1
+    return {"checked": len(rows), "updated": updated}
 
 
 """

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from app.models import GraphResponse, GraphNode, GraphEdge, SeedRequest
 from app.db import get_cursor
 from app.services import lastfm, embeddings
+from app.services.covers import get_cover_url
 from app.config import MAX_LISTENERS, DEFAULT_K
 
 SIMILAR_TRACK_LISTENER_CAPS = [MAX_LISTENERS, 1_000_000, 2_000_000, 10_000_000]
@@ -132,14 +133,16 @@ def add_seed(request: SeedRequest):
                     embeddings.get_or_create_tag_ids(list(sim_tag_counts.keys()))
                     sim_vector = embeddings.build_tag_vector(sim_tag_counts)
 
+                    sim_image = get_cover_url(sim["artist"], sim["name"])
                     with get_cursor() as cursor:
                         cursor.execute("""
-                            INSERT INTO songs (track_id, name, artist, listeners, embedding)
-                            VALUES (%s, %s, %s, %s, %s)
+                            INSERT INTO songs (track_id, name, artist, listeners, embedding, image)
+                            VALUES (%s, %s, %s, %s, %s, %s)
                             ON CONFLICT (track_id) DO UPDATE SET
                                 listeners = EXCLUDED.listeners,
-                                embedding = EXCLUDED.embedding
-                        """, (sim_id, sim["name"], sim["artist"], sim_lastfm["listeners"], sim_vector))
+                                embedding = EXCLUDED.embedding,
+                                image = COALESCE(EXCLUDED.image, songs.image)
+                        """, (sim_id, sim["name"], sim["artist"], sim_lastfm["listeners"], sim_vector, sim_image))
 
                 similarity = embeddings.cosine_similarity(vector, sim_vector)
                 candidates.append({"track_id": sim_id, "similarity": similarity})

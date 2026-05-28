@@ -121,7 +121,8 @@ def linear_playlist(request: LinearPlaylistRequest):
 
     with get_cursor() as cursor:
         tracks = find_neighbors(
-            cursor, seed_embedding, {request.track_id},
+            cursor, seed_embedding,
+            {request.track_id, *request.exclude_ids},
             request.n, request.niche,
             neighborhood if neighborhood else None
         )
@@ -152,7 +153,7 @@ def tree_playlist(request: TreePlaylistRequest):
         # allowed set starts as the seed's direct neighbors and grows as we visit nodes
 
         playlist = []
-        seen = {request.track_id}
+        seen = {request.track_id, *request.exclude_ids}
         queue = [(request.track_id, seed_embedding, 0)]
 
         while queue and len(playlist) < request.n:

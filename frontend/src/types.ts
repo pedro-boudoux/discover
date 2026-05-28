@@ -31,6 +31,7 @@ export type ExpansionParams = {
   lambda: number;
   niche: boolean;
   maxDepth: number;
+  allowDuplicates: boolean;
 };
 
 export const DEFAULT_EXPANSION: ExpansionParams = {
@@ -39,4 +40,5 @@ export const DEFAULT_EXPANSION: ExpansionParams = {
   lambda: 0.7,
   niche: false,
   maxDepth: 3,
+  allowDuplicates: false,
 };

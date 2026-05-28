@@ -98,6 +98,16 @@ export function NodePopover({ nodeLabel, loading, onExpand, onClose, initial }: 
         </label>
       )}
 
+      <label className="flex items-center gap-2 mt-3 text-xs cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={params.allowDuplicates}
+          onChange={(e) => update("allowDuplicates", e.target.checked)}
+          className="accent-cyan-400"
+        />
+        <span className="text-muted">Allow songs already in graph</span>
+      </label>
+
       <button
         disabled={loading}
         onClick={() => onExpand(params)}

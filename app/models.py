@@ -77,6 +77,7 @@ class LinearPlaylistRequest(BaseModel):
     track_id: str
     n: int = 10
     niche: bool = False
+    exclude_ids: list[str] = []
 
 
 class TreePlaylistRequest(BaseModel):
@@ -84,6 +85,7 @@ class TreePlaylistRequest(BaseModel):
     n: int = 10
     max_depth: int = 3
     niche: bool = False
+    exclude_ids: list[str] = []
 
 
 class PlaylistResponse(BaseModel):

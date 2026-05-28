@@ -12,7 +12,8 @@ router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 def get_recommendations(
     track_id: str,
     k: int = Query(default=DEFAULT_K, ge=1, le=50),
-    lambda_param: float = Query(default=MMR_LAMBDA, ge=0.0, le=1.0, alias="lambda")
+    lambda_param: float = Query(default=MMR_LAMBDA, ge=0.0, le=1.0, alias="lambda"),
+    exclude: list[str] = Query(default=[])
 ):
     with get_cursor() as cursor:
 
@@ -30,16 +31,17 @@ def get_recommendations(
         base_embedding = list(row["embedding"])
         steered_embedding = steering.apply_steering(base_embedding, track_id)
 
+        exclude_ids = list({track_id, *exclude})
         cursor.execute("""
             SELECT track_id, name, artist, listeners, image, embedding,
                    1 - (embedding <=> %s::vector) AS similarity
             FROM songs
             WHERE embedding IS NOT NULL
             AND listeners < %s
-            AND track_id != %s
+            AND track_id != ALL(%s)
             ORDER BY embedding <=> %s::vector
             LIMIT %s
-        """, (steered_embedding, MAX_LISTENERS, track_id, steered_embedding, k * MMR_POOL_MULTIPLIER))
+        """, (steered_embedding, MAX_LISTENERS, exclude_ids, steered_embedding, k * MMR_POOL_MULTIPLIER))
 
         pool = [
             {

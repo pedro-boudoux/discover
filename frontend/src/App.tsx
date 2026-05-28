@@ -70,7 +70,7 @@ export default function App() {
         const initialChildren = await expandFromTrack(
           song.track_id,
           "recommendations",
-          { k: 8, lambda: 0.7, niche: false, maxDepth: 3 },
+          { k: 8, lambda: 0.7, niche: false, maxDepth: 3, excludeIds: [] },
         );
 
         const seedNode: Node<SongNodeData> = {
@@ -143,11 +143,17 @@ export default function App() {
       setError(null);
       try {
         const parentId = popover.nodeId;
+        const excludeIds = params.allowDuplicates
+          ? []
+          : Array.from(nodePositions.current.keys()).filter(
+              (id) => id !== parentId,
+            );
         const children = await expandFromTrack(parentId, params.method, {
           k: params.k,
           lambda: params.lambda,
           niche: params.niche,
           maxDepth: params.maxDepth,
+          excludeIds,
         });
 
         const parentPos =

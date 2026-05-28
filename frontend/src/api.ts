@@ -41,17 +41,28 @@ export function seedSong(track_id: string) {
   );
 }
 
-export function getRecommendations(track_id: string, k: number, lambdaParam: number) {
+export function getRecommendations(
+  track_id: string,
+  k: number,
+  lambdaParam: number,
+  excludeIds: string[],
+) {
   const params = new URLSearchParams({ k: String(k), lambda: String(lambdaParam) });
+  for (const id of excludeIds) params.append("exclude", id);
   return request<{ recommendations: Recommendation[] }>(
     `/recommendations/${track_id}?${params}`,
   );
 }
 
-export function linearPlaylist(track_id: string, n: number, niche: boolean) {
+export function linearPlaylist(
+  track_id: string,
+  n: number,
+  niche: boolean,
+  exclude_ids: string[],
+) {
   return request<{ seed_track_id: string; tracks: PlaylistTrack[] }>(
     `/playlists/linear`,
-    { method: "POST", body: JSON.stringify({ track_id, n, niche }) },
+    { method: "POST", body: JSON.stringify({ track_id, n, niche, exclude_ids }) },
   );
 }
 
@@ -60,10 +71,14 @@ export function treePlaylist(
   n: number,
   max_depth: number,
   niche: boolean,
+  exclude_ids: string[],
 ) {
   return request<{ seed_track_id: string; tracks: PlaylistTrack[] }>(
     `/playlists/tree`,
-    { method: "POST", body: JSON.stringify({ track_id, n, max_depth, niche }) },
+    {
+      method: "POST",
+      body: JSON.stringify({ track_id, n, max_depth, niche, exclude_ids }),
+    },
   );
 }
 
@@ -79,16 +94,38 @@ export type ExpandedTrack = {
 export async function expandFromTrack(
   track_id: string,
   method: ExpansionMethod,
-  opts: { k: number; lambda: number; niche: boolean; maxDepth: number },
+  opts: {
+    k: number;
+    lambda: number;
+    niche: boolean;
+    maxDepth: number;
+    excludeIds: string[];
+  },
 ): Promise<ExpandedTrack[]> {
   if (method === "recommendations") {
-    const data = await getRecommendations(track_id, opts.k, opts.lambda);
+    const data = await getRecommendations(
+      track_id,
+      opts.k,
+      opts.lambda,
+      opts.excludeIds,
+    );
     return data.recommendations;
   }
   if (method === "linear") {
-    const data = await linearPlaylist(track_id, opts.k, opts.niche);
+    const data = await linearPlaylist(
+      track_id,
+      opts.k,
+      opts.niche,
+      opts.excludeIds,
+    );
     return data.tracks;
   }
-  const data = await treePlaylist(track_id, opts.k, opts.maxDepth, opts.niche);
+  const data = await treePlaylist(
+    track_id,
+    opts.k,
+    opts.maxDepth,
+    opts.niche,
+    opts.excludeIds,
+  );
   return data.tracks;
 }

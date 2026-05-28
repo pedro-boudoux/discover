@@ -11,7 +11,8 @@ router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 @router.get("/{track_id}", response_model=RecommendationsResponse)
 def get_recommendations(
     track_id: str,
-    k: int = Query(default=DEFAULT_K, ge=1, le=50)
+    k: int = Query(default=DEFAULT_K, ge=1, le=50),
+    lambda_param: float = Query(default=MMR_LAMBDA, ge=0.0, le=1.0, alias="lambda")
 ):
     with get_cursor() as cursor:
 
@@ -61,7 +62,7 @@ def get_recommendations(
             capped_pool.append(candidate)
             artist_counts[artist] = artist_counts.get(artist, 0) + 1
 
-    reranked = mmr_rerank(steered_embedding, capped_pool, k, MMR_LAMBDA)
+    reranked = mmr_rerank(steered_embedding, capped_pool, k, lambda_param)
 
     recommendations = [
         Recommendation(

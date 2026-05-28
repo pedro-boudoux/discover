@@ -12,3 +12,5 @@ STEERING_ALPHA = 0.3
 MAX_LISTENERS = 500000
 DEFAULT_K = 10
 EMBEDDING_DIM = 300
+MMR_LAMBDA = 0.7       # relevance vs diversity tradeoff (1.0 = pure relevance, 0.0 = pure diversity)
+MMR_POOL_MULTIPLIER = 3  # fetch this many × k candidates before re-ranking

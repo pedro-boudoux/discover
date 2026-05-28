@@ -63,3 +63,36 @@ def cosine_similarity(a: list, b: list) -> float:
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return float(dot / (norm_a * norm_b))
+
+
+def mmr_rerank(query_embedding: list, candidates: list[dict], k: int, lambda_param: float) -> list[dict]:
+    """
+    Maximal Marginal Relevance re-ranking. Each candidate dict must have an 'embedding' key.
+    Balances similarity to the query (relevance) against similarity to already-selected items (diversity).
+    """
+    if not candidates:
+        return []
+
+    selected = []
+    remaining = candidates[:]
+
+    while len(selected) < k and remaining:
+        best = None
+        best_score = float("-inf")
+
+        for candidate in remaining:
+            relevance = cosine_similarity(query_embedding, candidate["embedding"])
+            redundancy = max(
+                (cosine_similarity(candidate["embedding"], s["embedding"]) for s in selected),
+                default=0.0,
+            )
+            score = lambda_param * relevance - (1 - lambda_param) * redundancy
+
+            if score > best_score:
+                best_score = score
+                best = candidate
+
+        selected.append(best)
+        remaining.remove(best)
+
+    return selected

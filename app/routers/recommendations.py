@@ -2,7 +2,8 @@ from fastapi import APIRouter, Query
 from app.models import RecommendationsResponse, Recommendation
 from app.db import get_cursor
 from app.services import steering
-from app.config import MAX_LISTENERS, DEFAULT_K
+from app.services.embeddings import mmr_rerank
+from app.config import MAX_LISTENERS, DEFAULT_K, MMR_LAMBDA, MMR_POOL_MULTIPLIER
 
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
@@ -14,7 +15,6 @@ def get_recommendations(
 ):
     with get_cursor() as cursor:
 
-        # gets passed song's embedding
         cursor.execute(
             "SELECT embedding FROM songs WHERE track_id = %s",
             (track_id,)
@@ -30,7 +30,7 @@ def get_recommendations(
         steered_embedding = steering.apply_steering(base_embedding, track_id)
 
         cursor.execute("""
-            SELECT track_id, name, artist, listeners, image,
+            SELECT track_id, name, artist, listeners, image, embedding,
                    1 - (embedding <=> %s::vector) AS similarity
             FROM songs
             WHERE embedding IS NOT NULL
@@ -38,18 +38,33 @@ def get_recommendations(
             AND track_id != %s
             ORDER BY embedding <=> %s::vector
             LIMIT %s
-        """, (steered_embedding, MAX_LISTENERS, track_id, steered_embedding, k))
+        """, (steered_embedding, MAX_LISTENERS, track_id, steered_embedding, k * MMR_POOL_MULTIPLIER))
 
-        recommendations = [
-            Recommendation(
-                track_id=r["track_id"],
-                name=r["name"],
-                artist=r["artist"],
-                similarity=round(r["similarity"], 3),
-                listeners=r["listeners"],
-                image=r["image"]
-            )
+        pool = [
+            {
+                "track_id": r["track_id"],
+                "name": r["name"],
+                "artist": r["artist"],
+                "listeners": r["listeners"],
+                "image": r["image"],
+                "embedding": list(r["embedding"]),
+                "similarity": round(r["similarity"], 3),
+            }
             for r in cursor.fetchall()
         ]
+
+    reranked = mmr_rerank(steered_embedding, pool, k, MMR_LAMBDA)
+
+    recommendations = [
+        Recommendation(
+            track_id=r["track_id"],
+            name=r["name"],
+            artist=r["artist"],
+            similarity=r["similarity"],
+            listeners=r["listeners"],
+            image=r["image"],
+        )
+        for r in reranked
+    ]
 
     return RecommendationsResponse(recommendations=recommendations)

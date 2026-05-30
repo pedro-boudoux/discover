@@ -1,21 +1,56 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   addEdge,
   useEdgesState,
   useNodesState,
   type Edge,
   type Node,
+  type NodeDragHandler,
   type NodeMouseHandler,
 } from "reactflow";
+import {
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+  type ForceLink,
+  type Simulation,
+  type SimulationLinkDatum,
+  type SimulationNodeDatum,
+} from "d3-force";
 import { Graph } from "./components/Graph";
 import { NodePopover } from "./components/NodePopover";
 import { SearchBar } from "./components/SearchBar";
-import type { SongNodeData } from "./components/SongNode";
+import { NODE_SIZE, type SongNodeData } from "./components/SongNode";
 import { expandFromTrack, getSongStatus, seedSong } from "./api";
 import { LoadingText, Spinner } from "./components/Loader";
 import type { ExpansionParams, SongSearchResult } from "./types";
 
 type SeedingPhase = null | "checking" | "warm" | "cold";
+
+const COLLIDE_RADIUS = NODE_SIZE / 2 + 28;
+const LINK_DISTANCE = 240;
+const ARC_RADIUS = 260;
+
+type Vec = { x: number; y: number };
+
+type SimNode = SimulationNodeDatum & { id: string; isSeed: boolean };
+type SimLink = SimulationLinkDatum<SimNode>;
+
+function arcAround(count: number, parentPos: Vec): Vec[] {
+  const arcStart = -Math.PI * 0.85;
+  const arcEnd = Math.PI * 0.85;
+  const positions: Vec[] = [];
+  for (let i = 0; i < count; i++) {
+    const t = count === 1 ? 0.5 : i / (count - 1);
+    const angle = arcStart + (arcEnd - arcStart) * t;
+    positions.push({
+      x: parentPos.x + ARC_RADIUS * Math.sin(angle),
+      y: parentPos.y + ARC_RADIUS * (0.4 + 0.6 * Math.cos(angle)),
+    });
+  }
+  return positions;
+}
 
 type PopoverState = {
   nodeId: string;
@@ -31,23 +66,102 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [seedingPhase, setSeedingPhase] = useState<SeedingPhase>(null);
   const [error, setError] = useState<string | null>(null);
-  const nodePositions = useRef(new Map<string, { x: number; y: number }>());
 
-  const placeChildrenAround = useCallback(
-    (count: number, parentPos: { x: number; y: number }) => {
-      const radius = 320;
-      const arcStart = -Math.PI * 0.85;
-      const arcEnd = Math.PI * 0.85;
-      const positions: { x: number; y: number }[] = [];
-      for (let i = 0; i < count; i++) {
-        const t = count === 1 ? 0.5 : i / (count - 1);
-        const angle = arcStart + (arcEnd - arcStart) * t;
-        positions.push({
-          x: parentPos.x + radius * Math.sin(angle),
-          y: parentPos.y + radius * (0.4 + 0.6 * Math.cos(angle)),
-        });
+  const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
+  const simNodesRef = useRef<Map<string, SimNode>>(new Map());
+  const simLinksRef = useRef<SimLink[]>([]);
+
+  useEffect(() => {
+    const sim = forceSimulation<SimNode>([])
+      .force(
+        "collide",
+        forceCollide<SimNode>(COLLIDE_RADIUS).strength(0.95).iterations(2),
+      )
+      .force(
+        "link",
+        forceLink<SimNode, SimLink>([])
+          .id((d) => d.id)
+          .distance(LINK_DISTANCE)
+          .strength(0.18),
+      )
+      .force(
+        "charge",
+        forceManyBody<SimNode>().strength(-160).distanceMax(480),
+      )
+      .alphaDecay(0.035)
+      .velocityDecay(0.4)
+      .on("tick", () => {
+        const map = simNodesRef.current;
+        setNodes((curr) =>
+          curr.map((n) => {
+            const sn = map.get(n.id);
+            if (!sn) return n;
+            const x = sn.x ?? n.position.x;
+            const y = sn.y ?? n.position.y;
+            if (n.position.x === x && n.position.y === y) return n;
+            return { ...n, position: { x, y } };
+          }),
+        );
+      });
+    simRef.current = sim;
+    return () => {
+      sim.stop();
+    };
+  }, [setNodes]);
+
+  const syncSimulation = useCallback(
+    (
+      structuralNodes: { id: string; isSeed: boolean; x: number; y: number }[],
+      structuralEdges: { source: string; target: string }[],
+      reset: boolean,
+    ) => {
+      const sim = simRef.current;
+      if (!sim) return;
+
+      if (reset) {
+        simNodesRef.current.clear();
+        simLinksRef.current = [];
       }
-      return positions;
+
+      for (const n of structuralNodes) {
+        if (simNodesRef.current.has(n.id)) continue;
+        const node: SimNode = {
+          id: n.id,
+          isSeed: n.isSeed,
+          x: n.x,
+          y: n.y,
+        };
+        if (n.isSeed) {
+          node.fx = 0;
+          node.fy = 0;
+        }
+        simNodesRef.current.set(n.id, node);
+      }
+
+      const linkKey = (l: SimLink) => {
+        const s =
+          typeof l.source === "string"
+            ? l.source
+            : (l.source as SimNode).id;
+        const t =
+          typeof l.target === "string"
+            ? l.target
+            : (l.target as SimNode).id;
+        return `${s}->${t}`;
+      };
+      const existing = new Set(simLinksRef.current.map(linkKey));
+      for (const e of structuralEdges) {
+        const key = `${e.source}->${e.target}`;
+        if (!existing.has(key)) {
+          simLinksRef.current.push({ source: e.source, target: e.target });
+          existing.add(key);
+        }
+      }
+
+      sim.nodes(Array.from(simNodesRef.current.values()));
+      const linkForce = sim.force<ForceLink<SimNode, SimLink>>("link");
+      linkForce?.links(simLinksRef.current);
+      sim.alpha(reset ? 1 : 0.85).restart();
     },
     [],
   );
@@ -73,10 +187,13 @@ export default function App() {
           { k: 8, lambda: 0.7, niche: false, maxDepth: 3, excludeIds: [] },
         );
 
+        const seedPos = { x: 0, y: 0 };
+        const childPositions = arcAround(initialChildren.length, seedPos);
+
         const seedNode: Node<SongNodeData> = {
           id: song.track_id,
           type: "song",
-          position: { x: 0, y: 0 },
+          position: seedPos,
           data: {
             name: song.name,
             artist: song.artist,
@@ -84,30 +201,20 @@ export default function App() {
             isSeed: true,
           },
         };
-        nodePositions.current.clear();
-        nodePositions.current.set(song.track_id, { x: 0, y: 0 });
 
-        const childPositions = placeChildrenAround(initialChildren.length, {
-          x: 0,
-          y: 0,
-        });
-
-        const childNodes: Node<SongNodeData>[] = initialChildren.map((c, i) => {
-          nodePositions.current.set(c.track_id, childPositions[i]);
-          return {
-            id: c.track_id,
-            type: "song",
-            position: childPositions[i],
-            data: {
-              name: c.name,
-              artist: c.artist,
-              image: c.image,
-              isSeed: false,
-              similarity: c.similarity,
-              listeners: c.listeners,
-            },
-          };
-        });
+        const childNodes: Node<SongNodeData>[] = initialChildren.map((c, i) => ({
+          id: c.track_id,
+          type: "song",
+          position: childPositions[i],
+          data: {
+            name: c.name,
+            artist: c.artist,
+            image: c.image,
+            isSeed: false,
+            similarity: c.similarity,
+            listeners: c.listeners,
+          },
+        }));
 
         const newEdges: Edge[] = initialChildren.map((c) => ({
           id: `${song.track_id}->${c.track_id}`,
@@ -117,13 +224,27 @@ export default function App() {
 
         setNodes([seedNode, ...childNodes]);
         setEdges(newEdges);
+
+        syncSimulation(
+          [
+            { id: song.track_id, isSeed: true, x: 0, y: 0 },
+            ...initialChildren.map((c, i) => ({
+              id: c.track_id,
+              isSeed: false,
+              x: childPositions[i].x,
+              y: childPositions[i].y,
+            })),
+          ],
+          newEdges.map((e) => ({ source: e.source!, target: e.target! })),
+          true,
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to seed song");
       } finally {
         setSeedingPhase(null);
       }
     },
-    [placeChildrenAround, setNodes, setEdges],
+    [setNodes, setEdges, syncSimulation],
   );
 
   const handleNodeClick: NodeMouseHandler = useCallback((event, node) => {
@@ -143,11 +264,10 @@ export default function App() {
       setError(null);
       try {
         const parentId = popover.nodeId;
+        const knownIds = Array.from(simNodesRef.current.keys());
         const excludeIds = params.allowDuplicates
           ? []
-          : Array.from(nodePositions.current.keys()).filter(
-              (id) => id !== parentId,
-            );
+          : knownIds.filter((id) => id !== parentId);
         const children = await expandFromTrack(parentId, params.method, {
           k: params.k,
           lambda: params.lambda,
@@ -156,34 +276,30 @@ export default function App() {
           excludeIds,
         });
 
-        const parentPos =
-          nodePositions.current.get(parentId) ?? { x: 0, y: 0 };
+        const parentSim = simNodesRef.current.get(parentId);
+        const parentPos: Vec = {
+          x: parentSim?.x ?? 0,
+          y: parentSim?.y ?? 0,
+        };
 
         const newChildren = children.filter(
-          (c) => !nodePositions.current.has(c.track_id),
+          (c) => !simNodesRef.current.has(c.track_id),
         );
+        const initialPositions = arcAround(newChildren.length, parentPos);
 
-        const childPositions = placeChildrenAround(
-          newChildren.length,
-          parentPos,
-        );
-
-        const newNodes: Node<SongNodeData>[] = newChildren.map((c, i) => {
-          nodePositions.current.set(c.track_id, childPositions[i]);
-          return {
-            id: c.track_id,
-            type: "song",
-            position: childPositions[i],
-            data: {
-              name: c.name,
-              artist: c.artist,
-              image: c.image,
-              isSeed: false,
-              similarity: c.similarity,
-              listeners: c.listeners,
-            },
-          };
-        });
+        const newNodes: Node<SongNodeData>[] = newChildren.map((c, i) => ({
+          id: c.track_id,
+          type: "song",
+          position: initialPositions[i],
+          data: {
+            name: c.name,
+            artist: c.artist,
+            image: c.image,
+            isSeed: false,
+            similarity: c.similarity,
+            listeners: c.listeners,
+          },
+        }));
 
         const newEdges: Edge[] = children.map((c) => ({
           id: `${parentId}->${c.track_id}`,
@@ -201,6 +317,18 @@ export default function App() {
           }
           return next;
         });
+
+        syncSimulation(
+          newChildren.map((c, i) => ({
+            id: c.track_id,
+            isSeed: false,
+            x: initialPositions[i].x,
+            y: initialPositions[i].y,
+          })),
+          newEdges.map((e) => ({ source: e.source!, target: e.target! })),
+          false,
+        );
+
         setPopover(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to expand");
@@ -208,8 +336,33 @@ export default function App() {
         setLoading(false);
       }
     },
-    [popover, placeChildrenAround, setNodes, setEdges],
+    [popover, setNodes, setEdges, syncSimulation],
   );
+
+  const handleNodeDragStart: NodeDragHandler = useCallback((_, node) => {
+    const sn = simNodesRef.current.get(node.id);
+    if (!sn) return;
+    sn.fx = node.position.x;
+    sn.fy = node.position.y;
+    simRef.current?.alphaTarget(0.3).restart();
+  }, []);
+
+  const handleNodeDrag: NodeDragHandler = useCallback((_, node) => {
+    const sn = simNodesRef.current.get(node.id);
+    if (!sn) return;
+    sn.fx = node.position.x;
+    sn.fy = node.position.y;
+  }, []);
+
+  const handleNodeDragStop: NodeDragHandler = useCallback((_, node) => {
+    const sn = simNodesRef.current.get(node.id);
+    if (!sn) return;
+    if (!sn.isSeed) {
+      sn.fx = null;
+      sn.fy = null;
+    }
+    simRef.current?.alphaTarget(0);
+  }, []);
 
   const hasGraph = nodes.length > 0;
 
@@ -224,6 +377,9 @@ export default function App() {
             onEdgesChange={onEdgesChange}
             onNodeClick={handleNodeClick}
             onPaneClick={() => setPopover(null)}
+            onNodeDragStart={handleNodeDragStart}
+            onNodeDrag={handleNodeDrag}
+            onNodeDragStop={handleNodeDragStop}
           />
           <div className="absolute top-3 left-3 z-10 w-[420px] max-w-[calc(100%-1.5rem)]">
             <SearchBar

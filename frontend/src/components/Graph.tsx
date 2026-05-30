@@ -2,8 +2,10 @@ import { useMemo } from "react";
 import ReactFlow, {
   Background,
   Controls,
+  type DefaultEdgeOptions,
   type Edge,
   type Node,
+  type NodeDragHandler,
   type NodeMouseHandler,
   type NodeTypes,
   type OnEdgesChange,
@@ -13,6 +15,11 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 import { SongNode, type SongNodeData } from "./SongNode";
 
+const defaultEdgeOptions: DefaultEdgeOptions = {
+  type: "simplebezier",
+  style: { stroke: "#3f3f46", strokeWidth: 1.25, opacity: 0.55 },
+};
+
 type Props = {
   nodes: Node<SongNodeData>[];
   edges: Edge[];
@@ -20,6 +27,9 @@ type Props = {
   onEdgesChange: OnEdgesChange;
   onNodeClick: NodeMouseHandler;
   onPaneClick: () => void;
+  onNodeDragStart?: NodeDragHandler;
+  onNodeDrag?: NodeDragHandler;
+  onNodeDragStop?: NodeDragHandler;
 };
 
 export function Graph({
@@ -29,6 +39,9 @@ export function Graph({
   onEdgesChange,
   onNodeClick,
   onPaneClick,
+  onNodeDragStart,
+  onNodeDrag,
+  onNodeDragStop,
 }: Props) {
   const nodeTypes = useMemo<NodeTypes>(() => ({ song: SongNode }), []);
 
@@ -40,7 +53,12 @@ export function Graph({
       onEdgesChange={onEdgesChange}
       onNodeClick={onNodeClick}
       onPaneClick={onPaneClick}
+      onNodeDragStart={onNodeDragStart}
+      onNodeDrag={onNodeDrag}
+      onNodeDragStop={onNodeDragStop}
       nodeTypes={nodeTypes}
+      nodeOrigin={[0.5, 0.5]}
+      defaultEdgeOptions={defaultEdgeOptions}
       fitView
       fitViewOptions={{ padding: 0.3, duration: 400 }}
       proOptions={{ hideAttribution: true }}

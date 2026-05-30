@@ -9,54 +9,142 @@ from app.config import EMBEDDING_DIM
 router = APIRouter(prefix="/songs", tags=["songs"])
 
 
+SEARCH_LIMIT = 15
+LOCAL_SEARCH_LIMIT = 20
+
+
+def _search_local_songs(q: str, limit: int = LOCAL_SEARCH_LIMIT) -> list[dict]:
+    pattern = f"%{q}%"
+    prefix = f"{q}%"
+    with get_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT track_id, name, artist, image
+            FROM songs
+            WHERE name ILIKE %s OR artist ILIKE %s
+            ORDER BY
+                CASE
+                    WHEN name ILIKE %s THEN 0
+                    WHEN artist ILIKE %s THEN 1
+                    ELSE 2
+                END,
+                length(name)
+            LIMIT %s
+            """,
+            (pattern, pattern, prefix, prefix, limit),
+        )
+        rows = cursor.fetchall()
+    return [
+        {
+            "track_id": r["track_id"],
+            "name": r["name"],
+            "artist": r["artist"],
+            "image": r["image"],
+        }
+        for r in rows
+    ]
+
+
+def _fetch_cached_images(track_ids: list[str]) -> dict[str, str | None]:
+    if not track_ids:
+        return {}
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT track_id, image FROM songs WHERE track_id = ANY(%s)",
+            (track_ids,),
+        )
+        return {r["track_id"]: r["image"] for r in cursor.fetchall()}
+
+
+def _upsert_songs(tracks: list[dict]) -> None:
+    if not tracks:
+        return
+    rows = [(t["track_id"], t["name"], t["artist"], t.get("image")) for t in tracks]
+    with get_cursor() as cursor:
+        # COALESCE preserves a previously-cached real cover when the latest
+        # lookup returns nothing, so we never regress a known image to NULL.
+        cursor.executemany(
+            """
+            INSERT INTO songs (track_id, name, artist, image)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (track_id) DO UPDATE SET
+                name   = EXCLUDED.name,
+                artist = EXCLUDED.artist,
+                image  = COALESCE(EXCLUDED.image, songs.image)
+            """,
+            rows,
+        )
+
+
 """
     Entry point for the user, takes user's search input and returns a track that matches that query.
+    Runs a local DB search and Last.fm search in parallel, merges them, then only fetches
+    covers from Deezer / iTunes for tracks we don't already have a real cover for.
     /search?q={USER_INPUT}
 """
 @router.get("/search", response_model=list[SongSearchResult])
 def search_songs(q: str = Query(..., min_length=1)):
 
-    # gets list of dicts (ea with a name, artist and image) from Last.fm's API
-    tracks = lastfm.search_tracks(q)
+    # Local DB lookup + Last.fm search run concurrently
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        local_future = pool.submit(_search_local_songs, q)
+        lastfm_future = pool.submit(lastfm.search_tracks, q)
+        local_tracks = local_future.result()
+        lastfm_tracks = lastfm_future.result()
 
-    # generates our own list of track ids for each song based on the artist+name
-    results = []
-    for t in tracks:
-        track_id = emb_service.make_track_id(t["artist"], t["name"])
-        t["track_id"] = track_id
-        results.append(t)
+    # Assign track_ids to Last.fm results
+    for t in lastfm_tracks:
+        t["track_id"] = emb_service.make_track_id(t["artist"], t["name"])
 
-    # Last.fm hands back a placeholder URL for almost everything, so replace it
-    # with a real cover from Deezer / iTunes. Done in parallel so search stays snappy.
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        covers = list(pool.map(lambda t: get_cover_url(t["artist"], t["name"]), results))
-    for t, cover in zip(results, covers):
-        if cover:
-            t["image"] = cover
-        elif is_broken_image(t["image"]):
-            t["image"] = None
+    # Merge: Last.fm first (popularity-ranked), then any local-only matches
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for t in lastfm_tracks:
+        if t["track_id"] in seen:
+            continue
+        seen.add(t["track_id"])
+        merged.append({
+            "track_id": t["track_id"],
+            "name": t["name"],
+            "artist": t["artist"],
+            "image": t.get("image"),
+        })
+    for t in local_tracks:
+        if t["track_id"] in seen:
+            continue
+        seen.add(t["track_id"])
+        merged.append(t)
 
-    # records that the results exist by inserting them into the songs table
-    with get_cursor() as cursor:
-        for t in results:
-            cursor.execute("""
-                INSERT INTO songs (track_id, name, artist, image)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (track_id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    artist = EXCLUDED.artist,
-                    image = EXCLUDED.image
-            """, (t["track_id"], t["name"], t["artist"], t["image"]))
+    merged = merged[:SEARCH_LIMIT]
 
-    # returns list of song search results
+    # Reuse cached covers: only call Deezer/iTunes for tracks without a real one
+    cached_images = _fetch_cached_images([t["track_id"] for t in merged])
+    need_cover: list[dict] = []
+    for t in merged:
+        cached = cached_images.get(t["track_id"])
+        if cached and not is_broken_image(cached):
+            t["image"] = cached
+        elif is_broken_image(t.get("image")):
+            need_cover.append(t)
+
+    if need_cover:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            covers = list(
+                pool.map(lambda t: get_cover_url(t["artist"], t["name"]), need_cover)
+            )
+        for t, cover in zip(need_cover, covers):
+            t["image"] = cover  # cover may be None — that's fine
+
+    _upsert_songs(merged)
+
     return [
         SongSearchResult(
             track_id=t["track_id"],
             name=t["name"],
             artist=t["artist"],
-            image=t["image"]
+            image=t["image"],
         )
-        for t in results
+        for t in merged
     ]
 
 

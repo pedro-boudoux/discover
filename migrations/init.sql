@@ -1,4 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE IF NOT EXISTS songs (
     id         SERIAL PRIMARY KEY,
@@ -13,6 +14,12 @@ CREATE TABLE IF NOT EXISTS songs (
 
 CREATE INDEX IF NOT EXISTS idx_songs_embedding
     ON songs USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS idx_songs_name_trgm
+    ON songs USING gin (name gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_songs_artist_trgm
+    ON songs USING gin (artist gin_trgm_ops);
 
 CREATE TABLE IF NOT EXISTS tag_vocab (
     id  SERIAL PRIMARY KEY,

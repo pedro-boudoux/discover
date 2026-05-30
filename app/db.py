@@ -98,3 +98,9 @@ def init_db():
     _try("CREATE UNIQUE INDEX IF NOT EXISTS graph_nodes_track_id_unique ON graph_nodes(track_id)")
     _try("CREATE INDEX IF NOT EXISTS idx_songs_embedding ON songs USING hnsw (embedding vector_cosine_ops)")
     _try("CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_source_target ON graph_edges(source_id, target_id)")
+
+    # Trigram indexes for fast substring search on the songs cache.
+    # Silently skipped if pg_trgm isn't available on the host.
+    _try("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    _try("CREATE INDEX IF NOT EXISTS idx_songs_name_trgm ON songs USING gin (name gin_trgm_ops)")
+    _try("CREATE INDEX IF NOT EXISTS idx_songs_artist_trgm ON songs USING gin (artist gin_trgm_ops)")

@@ -4,14 +4,25 @@ import { DEFAULT_EXPANSION } from "../types";
 
 type Props = {
   nodeLabel: string;
+  isSeed: boolean;
   loading: boolean;
   onExpand: (params: ExpansionParams) => void;
+  onDelete: () => void;
   onClose: () => void;
   initial?: ExpansionParams;
 };
 
-export function NodePopover({ nodeLabel, loading, onExpand, onClose, initial }: Props) {
+export function NodePopover({
+  nodeLabel,
+  isSeed,
+  loading,
+  onExpand,
+  onDelete,
+  onClose,
+  initial,
+}: Props) {
   const [params, setParams] = useState<ExpansionParams>(initial ?? DEFAULT_EXPANSION);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   function update<K extends keyof ExpansionParams>(key: K, value: ExpansionParams[K]) {
     setParams((p) => ({ ...p, [key]: value }));
@@ -115,6 +126,31 @@ export function NodePopover({ nodeLabel, loading, onExpand, onClose, initial }: 
       >
         {loading ? "Expanding…" : "Expand"}
       </button>
+
+      <div className="mt-3 pt-3 border-t border-edge">
+        <button
+          disabled={loading}
+          onClick={() => {
+            if (confirmingDelete) onDelete();
+            else setConfirmingDelete(true);
+          }}
+          className={[
+            "w-full rounded-md py-2 text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed",
+            confirmingDelete
+              ? "bg-red-600 text-white hover:bg-red-500"
+              : "border border-edge text-red-400 hover:text-red-300 hover:border-red-900",
+          ].join(" ")}
+        >
+          {confirmingDelete ? "Click again to remove" : "Remove from graph"}
+        </button>
+        {confirmingDelete && (
+          <div className="text-[10px] text-muted mt-1.5 text-center">
+            {isSeed
+              ? "Removes this seed and everything branching from it."
+              : "Also removes any songs left disconnected from a seed."}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

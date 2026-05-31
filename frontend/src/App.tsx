@@ -37,6 +37,12 @@ type Vec = { x: number; y: number };
 type SimNode = SimulationNodeDatum & { id: string; isSeed: boolean };
 type SimLink = SimulationLinkDatum<SimNode>;
 
+function endId(end: SimLink["source"]): string {
+  return typeof end === "string" || typeof end === "number"
+    ? String(end)
+    : (end as SimNode).id;
+}
+
 function arcAround(count: number, parentPos: Vec): Vec[] {
   const arcStart = -Math.PI * 0.85;
   const arcEnd = Math.PI * 0.85;
@@ -55,6 +61,7 @@ function arcAround(count: number, parentPos: Vec): Vec[] {
 type PopoverState = {
   nodeId: string;
   label: string;
+  isSeed: boolean;
   x: number;
   y: number;
 };
@@ -138,17 +145,7 @@ export default function App() {
         simNodesRef.current.set(n.id, node);
       }
 
-      const linkKey = (l: SimLink) => {
-        const s =
-          typeof l.source === "string"
-            ? l.source
-            : (l.source as SimNode).id;
-        const t =
-          typeof l.target === "string"
-            ? l.target
-            : (l.target as SimNode).id;
-        return `${s}->${t}`;
-      };
+      const linkKey = (l: SimLink) => `${endId(l.source)}->${endId(l.target)}`;
       const existing = new Set(simLinksRef.current.map(linkKey));
       for (const e of structuralEdges) {
         const key = `${e.source}->${e.target}`;
@@ -252,6 +249,7 @@ export default function App() {
     setPopover({
       nodeId: node.id,
       label: `${data.name} — ${data.artist}`,
+      isSeed: data.isSeed,
       x: event.clientX,
       y: event.clientY,
     });
@@ -339,6 +337,68 @@ export default function App() {
     [popover, setNodes, setEdges, syncSimulation],
   );
 
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      // Edges that survive if nodeId is removed.
+      const survivingEdges = edges.filter(
+        (e) => e.source !== nodeId && e.target !== nodeId,
+      );
+      const adjacency = new Map<string, string[]>();
+      for (const e of survivingEdges) {
+        if (!e.source || !e.target) continue;
+        const list = adjacency.get(e.source) ?? [];
+        list.push(e.target);
+        adjacency.set(e.source, list);
+      }
+
+      // Anything still reachable from a remaining seed is kept; everything
+      // else (the node itself plus any descendants it orphaned) is removed.
+      const seeds = nodes
+        .filter((n) => n.id !== nodeId && n.data.isSeed)
+        .map((n) => n.id);
+      const reachable = new Set<string>(seeds);
+      const queue = [...seeds];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        for (const next of adjacency.get(cur) ?? []) {
+          if (!reachable.has(next)) {
+            reachable.add(next);
+            queue.push(next);
+          }
+        }
+      }
+
+      const removed = new Set<string>([nodeId]);
+      for (const n of nodes) {
+        if (n.id !== nodeId && !reachable.has(n.id)) removed.add(n.id);
+      }
+
+      setNodes((nds) => nds.filter((n) => !removed.has(n.id)));
+      setEdges((eds) =>
+        eds.filter(
+          (e) => !removed.has(e.source!) && !removed.has(e.target!),
+        ),
+      );
+
+      // Keep the force simulation in sync with the pruned graph.
+      for (const id of removed) simNodesRef.current.delete(id);
+      simLinksRef.current = simLinksRef.current.filter(
+        (l) => !removed.has(endId(l.source)) && !removed.has(endId(l.target)),
+      );
+      const sim = simRef.current;
+      if (sim) {
+        sim.nodes(Array.from(simNodesRef.current.values()));
+        sim
+          .force<ForceLink<SimNode, SimLink>>("link")
+          ?.links(simLinksRef.current);
+        sim.alpha(0.6).restart();
+      }
+
+      setPopover(null);
+    },
+    [nodes, edges, setNodes, setEdges],
+  );
+
   const handleNodeDragStart: NodeDragHandler = useCallback((_, node) => {
     const sn = simNodesRef.current.get(node.id);
     if (!sn) return;
@@ -404,9 +464,12 @@ export default function App() {
           }}
         >
           <NodePopover
+            key={popover.nodeId}
             nodeLabel={popover.label}
+            isSeed={popover.isSeed}
             loading={loading}
             onExpand={handleExpand}
+            onDelete={() => handleDeleteNode(popover.nodeId)}
             onClose={() => setPopover(null)}
           />
         </div>

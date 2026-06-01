@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from app.models import RecommendationsResponse, Recommendation
 from app.db import get_cursor
 from app.services import steering, lastfm, ingest, embeddings
@@ -66,22 +66,36 @@ def get_recommendations(
     exclude: list[str] = Query(default=[])
 ):
     with get_cursor() as cursor:
-
         cursor.execute(
-            "SELECT embedding FROM songs WHERE track_id = %s",
+            "SELECT name, artist, embedding FROM songs WHERE track_id = %s",
             (track_id,)
         )
         row = cursor.fetchone()
 
-        # if song somehow doesn't have an embedding we send empty recs
-        # TODO: I should make it so that this makes embeddings for said song, but I don't know how this will be used in the frontend yet so I'll wait.
-        if not row or row["embedding"] is None:
-            return RecommendationsResponse(recommendations=[])
+    # Unknown track — we have no name/artist to embed from, so this is a 404
+    # rather than an empty result (mirrors /graph/seed and /songs/{id}/features).
+    if not row:
+        raise HTTPException(404, "Track not found — search for it first")
 
+    if row["embedding"] is None:
+        # Cold seed: embed it on demand instead of bailing. Pass an effectively
+        # unbounded listener cap so the seed itself is never filtered out for
+        # being too popular — the underground cap only applies to candidates.
+        song = ingest.embed_and_store_track(row["artist"], row["name"], listener_cap=float("inf"))
+        base_embedding = song["embedding"] if song else None
+    else:
         base_embedding = list(row["embedding"])
-        steered_embedding = steering.apply_steering(base_embedding, track_id)
 
-        exclude_ids = list({track_id, *exclude})
+    # No tags anywhere (or every tag fell outside the vocab window) yields an
+    # all-zero vector, which makes cosine distance meaningless. There's genuinely
+    # nothing to recommend, so return empty rather than NaN-ranked garbage.
+    if not base_embedding or not any(base_embedding):
+        return RecommendationsResponse(recommendations=[])
+
+    steered_embedding = steering.apply_steering(base_embedding, track_id)
+    exclude_ids = list({track_id, *exclude})
+
+    with get_cursor() as cursor:
         cursor.execute("""
             SELECT track_id, name, artist, listeners, image, embedding,
                    1 - (embedding <=> %s::vector) AS similarity

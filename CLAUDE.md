@@ -1,10 +1,17 @@
-# Underground Music Discovery — Backend Plan
+# Underground Music Discovery — Backend
 
 ## What we're building
 
-A backend that powers a graph-based music discovery app. The user drops a seed song onto a graph, the backend finds sonically similar underground tracks via vector similarity search, and the graph expands based on user feedback.
+A backend that powers a graph-based music discovery app. The user drops a seed
+song onto a graph, the backend finds sonically similar underground tracks via
+vector similarity search, and the graph expands based on user feedback. The user
+can also export branches of the graph as linear or tree-shaped playlists.
 
-"Underground" = low listener/playcount count from Last.fm (proxy for popularity since Spotify's popularity score is behind a deprecated API).
+"Underground" = low listener count from Last.fm (proxy for popularity, since
+Spotify's popularity/audio-feature APIs are deprecated). The default underground
+ceiling is `listeners < 500_000` (`MAX_LISTENERS`).
+
+> See `ARCHITECTURE.md` for Mermaid diagrams of every flow described below.
 
 ---
 
@@ -13,31 +20,60 @@ A backend that powers a graph-based music discovery app. The user drops a seed s
 | Layer | Tool | Why |
 |---|---|---|
 | API | FastAPI (Python) | Async, fast, pairs well with ML tooling |
-| Song search | Spotify Web API via `spotipy` | Search by name, get metadata — no login required |
-| Audio features + tags | Last.fm API | Tag-based embeddings, listener counts, similar tracks — all free |
-| Embeddings | numpy + scikit-learn | Normalize Last.fm tag vectors |
+| Song search | Last.fm `track.search` + local Postgres cache | No login, and we reuse songs we've already embedded |
+| Tags + listener counts | Last.fm API | Tag-based embeddings, listener counts, similar tracks — all free |
+| Album covers | Deezer + iTunes | Last.fm stopped serving real artist/album images |
+| Embeddings | numpy | Normalize + blend Last.fm tag vectors |
 | Vector DB | Postgres + pgvector | ANN search + graph state in one DB |
 | Hosting | Render | Managed Postgres with pgvector, easy FastAPI deploys |
 
-### Dependencies
+### Dependencies (`requirements.txt`)
 
 ```
 fastapi
 uvicorn
-spotipy
 requests
 numpy
 scikit-learn
 psycopg2-binary
 pgvector
 python-dotenv
+pydantic
 ```
+
+> **No Spotify.** `spotipy` and all `SPOTIFY_*` config/env vars have been
+> removed. Spotify is not called anywhere in the codebase. (The only remaining
+> trace is the `spotify_id → track_id` rename migrations in `db.py`, kept to
+> migrate older deployed databases.)
 
 ---
 
-## Why not Spotify audio features?
+## Why not Spotify?
 
-Spotify deprecated `GET /audio-features` and `GET /recommendations` in November 2024. Apps created after that date get a 403 on these endpoints with no alternative from Spotify. We use Spotify only for search and basic metadata, and Last.fm for everything embeddings-related.
+Spotify deprecated `GET /audio-features` and `GET /recommendations` in November
+2024 (apps created after that date get a 403). Without audio features there was
+no compelling reason to keep Spotify in the loop at all, so song search was moved
+to **Last.fm `track.search`** merged with our **local Postgres cache**, and
+album art is fetched from **Deezer/iTunes**. Everything embeddings-related comes
+from Last.fm.
+
+---
+
+## Track identity
+
+There is no Spotify ID. Every track is keyed by a **`track_id`**: a 20-char SHA1
+of `"{artist}|||{track}"`, lowercased and stripped.
+
+```python
+# app/services/embeddings.py
+def make_track_id(artist: str, track: str) -> str:
+    key = f"{artist.strip().lower()}|||{track.strip().lower()}"
+    return hashlib.sha1(key.encode()).hexdigest()[:20]
+```
+
+This means the same song always resolves to the same id regardless of where it
+entered the system (search, seed bootstrap, recommendation top-up, playlist
+expansion), which is what lets all those paths dedupe against each other.
 
 ---
 
@@ -45,235 +81,178 @@ Spotify deprecated `GET /audio-features` and `GET /recommendations` in November 
 
 ### The core pipeline
 
-1. User searches for a song → `GET /songs/search` (hits Spotify)
-2. User drops it on the graph → `POST /graph/seed`
-3. Backend fetches Last.fm tags + listener count for the song
-4. Builds a tag vector: `{ "shoegaze": 91, "dream pop": 74, "lo-fi": 40, ... }`
-5. Normalizes the vector → stores embedding in pgvector
-6. Runs ANN search: find k-nearest neighbors filtered to `listeners < threshold`
-7. Returns candidate songs as new graph nodes
-8. User accepts or rejects each node → `POST /feedback`
-   - **Accept** → song becomes a new seed, pipeline reruns on it
-   - **Reject** → embedding stored as a negative, steers future searches away
+1. User searches → `GET /songs/search` (local DB + Last.fm in parallel, covers from Deezer/iTunes)
+2. User drops a song on the graph → `POST /graph/seed`
+3. Backend builds the seed's tag embedding (cache-aware), runs ANN search, then
+   bootstraps + recursively expands the candidate pool from Last.fm `getSimilar`
+4. Candidates become graph nodes/edges
+5. User accepts or rejects nodes → `POST /feedback`
+   - **Accept** → song is promoted to a seed and recommendations rerun from it
+   - **Reject** → stored as a negative; future queries from the parent seed steer away
+6. User exports a branch → `POST /playlists/linear` or `POST /playlists/tree`
+
+### Embedding strategy (blended tags)
+
+A single embedding blends **three** Last.fm tag sources into one
+`{tag: count}` dict (`lastfm.blend_tags`), so the vector reflects both the
+specific track and its broader stylistic context:
+
+| Source | Last.fm method | Weight |
+|---|---|---|
+| Track tags (dominant) | `track.getTopTags` | `1.0` |
+| Artist tags (context) | `artist.getTopTags` | `0.3` |
+| Similar-artist tags | `artist.getSimilar` → `artist.getTopTags` each | `0.1 × match` |
+
+Then (`embeddings.py`):
+
+1. Clean each tag: `tag.lower().strip()` — collapses "Hip-Hop"/"hip hop"/"hip-hop".
+2. Upsert tags into `tag_vocab`; each tag's row `id` is its slot in the vector.
+3. Normalize by dividing by the max blended count (top tag → `1.0`).
+4. Write into a dense `float[EMBEDDING_DIM]` (300) aligned to the vocab.
+
+Tags whose vocab `id >= EMBEDDING_DIM` are dropped (the vector is capped at 300
+dimensions). Artists with overlapping high-count tags score high on cosine
+similarity; low-count tags contribute little, which is the right behaviour.
+
+### ANN search + diversity (recommendations)
+
+`GET /recommendations/{track_id}` does more than raw nearest-neighbor:
+
+1. **Steering** — `query = base − α·Σ(rejected neighbors)`, then normalized (`α = 0.3`).
+2. **Over-fetch** — pull `k × MMR_POOL_MULTIPLIER` (3×) candidates with `listeners < 500k`.
+3. **Per-artist cap** — at most `MMR_MAX_PER_ARTIST` (2) per artist in the pool; the rest go to an overflow list.
+4. **MMR re-rank** — `score = λ·relevance − (1−λ)·redundancy` (`λ = 0.7`) for relevance/diversity balance.
+5. **Backfill** — if still short of `k`, refill from the capped-out overflow (most similar first).
+6. **Top-up** — if *still* short, fetch the seed's Last.fm `getSimilar`, embed+store, and score against the steered query.
 
 ### Vector steering on reject
 
-When a song is rejected, future ANN queries from that seed are nudged away from it:
+When a song is rejected, future ANN queries from its parent seed are nudged away:
 
 ```
-query_vector = seed_embedding - α * rejected_embedding
+query_vector = seed_embedding − α · Σ rejected_embeddings   # then L2-normalized
 ```
 
-`α` controls how strongly rejections steer (start with `0.3`, tune from there).
+`α` = `STEERING_ALPHA` = `0.3`. Rejections are scoped to a seed via
+`graph_edges` (only rejected *neighbors of that seed* steer it) — see
+`steering.get_rejected_embeddings`.
+
+### Seed bootstrapping & recursive expansion
+
+A fresh DB is sparse, so `POST /graph/seed` doesn't rely on ANN alone:
+
+- Pull the seed's `getSimilar` (limit 25), embed+store each, score against the seed.
+- If nothing lands under the underground cap, **escalate** the listener cap:
+  `500k → 1M → 2M → 10M` until at least one candidate is added.
+- Then **recursively expand**: take the top 3 candidates, pull *their* `getSimilar`
+  (limit 10) and embed those too — this thickens the local neighborhood so BFS
+  playlists don't drift into unrelated music once direct edges run out.
+- Merge ANN + getSimilar + expansion, keep the top `DEFAULT_K` (10) by similarity, write edges.
+
+### Playlists
+
+Two strategies over a seed's graph neighborhood (`app/routers/playlists.py`):
+
+- **Linear** (`/playlists/linear`) — flat list of the seed's neighbors. `niche=true`
+  walks listener thresholds `100 → 1k → 10k → 100k → 500k`, collecting the most
+  underground matches first, then sorts ascending by listener count.
+- **Tree** (`/playlists/tree`) — BFS from the seed (`max_depth`, default 3),
+  taking 2 neighbors per node and growing the allowed set with each visited
+  node's own edges. Produces a branching path through the graph.
+
+Both call `embed_missing` first to fill any null embeddings in the neighborhood.
 
 ---
 
 ## Data sources
 
-### Spotify (search + metadata only)
+### Last.fm (tags + listeners + similar — the core)
 
-Used for: searching songs by name, getting the Spotify ID, artist name, album art.
+`app/services/lastfm.py`. Auth: just an API key (free, no OAuth). Methods used:
 
-Auth: **Client Credentials** — no user login needed.
+- **`track.search`** — song search (returns name, artist, listeners, image).
+- **`track.getInfo`** — listener count (underground filter) + basic track tags.
+- **`track.getTopTags`** — track-level tags (dominant embedding source).
+- **`artist.getTopTags`** — artist-level tags with confidence counts (context).
+- **`artist.getSimilar`** — similar artists (kept if `match > 0.5`) to widen tag context.
+- **`track.getSimilar`** — candidate bootstrapping and recommendation top-up.
 
-```python
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
+The `count` field on tags is how many users applied that tag — it acts as a
+confidence score and drives normalization.
 
-sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-    client_id=os.getenv("SPOTIFY_CLIENT_ID"),
-    client_secret=os.getenv("SPOTIFY_CLIENT_SECRET")
-))
-```
+### Album covers (Deezer → iTunes → Deezer artist photo)
 
-Get credentials at [developer.spotify.com](https://developer.spotify.com) → create an app → copy client ID + secret into `.env`.
+`app/services/covers.py`. Last.fm serves a single broken placeholder
+(`2a96cbd8b46e442fc41c2b86b821562f`) for every artist, so covers are resolved by:
 
-Example response from `GET /search`:
-```json
-{
-  "tracks": {
-    "items": [
-      {
-        "id": "abc123",
-        "name": "Believe",
-        "artists": [{ "name": "Cher" }],
-        "album": { "name": "Believe", "images": [...] },
-        "duration_ms": 240000
-      }
-    ]
-  }
-}
-```
+1. Deezer track search → `album.cover_xl` (best for underground)
+2. iTunes search → `artworkUrl100` upscaled to `600x600`
+3. Deezer artist photo (`picture_xl`) as a last resort
 
-### Last.fm (tags + listener counts → embeddings)
-
-Used for: building tag vectors (the actual embedding), filtering underground tracks by listener count, bootstrapping candidate songs via `track.getSimilar`.
-
-Auth: just an API key — free, no OAuth.
-
-Get a key at [last.fm/api](https://www.last.fm/api).
-
-**`track.getInfo`** — called per song, gives listener count (underground filter) and top tags:
-
-```json
-{
-  "track": {
-    "name": "Believe",
-    "listeners": "69572",
-    "playcount": "281445",
-    "artist": { "name": "Cher" },
-    "toptags": {
-      "tag": [
-        { "name": "pop" },
-        { "name": "dance" },
-        { "name": "90s" }
-      ]
-    }
-  }
-}
-```
-
-**`artist.getTopTags`** — richer tags with confidence counts, used as the primary embedding source:
-
-```json
-{
-  "toptags": {
-    "tag": [
-      { "count": 100, "name": "female vocalists" },
-      { "count": 93,  "name": "indie" },
-      { "count": 88,  "name": "indie pop" },
-      { "count": 80,  "name": "pop" },
-      { "count": 67,  "name": "alternative" },
-      { "count": 13,  "name": "dream pop" }
-    ]
-  }
-}
-```
-
-The `count` field is how many Last.fm users applied that tag — it acts as a confidence score. Normalize these counts into a sparse vector and you have your embedding.
-
-**`track.getSimilar`** — useful for bootstrapping candidates when the vector DB is sparse:
-
-```json
-{
-  "similartracks": {
-    "track": [
-      { "name": "If You Had My Love", "artist": { "name": "Jennifer Lopez" }, "match": 1.0 },
-      { "name": "Genie In a Bottle", "artist": { "name": "Christina Aguilera" }, "match": 0.82 }
-    ]
-  }
-}
-```
-
-### Combining both sources
-
-For a single seed song the pipeline makes 3 API calls:
-
-```
-Spotify /search          → get spotify_id, name, artist, album art
-Last.fm track.getInfo    → get listener count (underground filter) + basic tags
-Last.fm artist.getTopTags → get full tag vector with confidence counts → embedding
-```
+`is_broken_image()` detects the Last.fm placeholder so we never persist it, and
+upserts use `COALESCE` so a known-good cover is never regressed to NULL.
 
 ---
 
-## Embedding strategy
+## Database schema
 
-Tags from `artist.getTopTags` form a sparse dictionary. To turn this into a fixed-size vector for pgvector:
+Schema lives in **`migrations/init.sql`** and is also created/migrated at startup
+by **`app/db.py:init_db()`** (idempotent — `CREATE TABLE IF NOT EXISTS` plus
+best-effort `ALTER`/index migrations, each in its own transaction).
 
-1. Maintain a global tag vocabulary (grows as new songs are added)
-2. For each song, fetch tags from `artist.getTopTags`
-3. Clean each tag: `tag.lower().strip()` — Last.fm tags are user-generated so "Hip-Hop", "hip hop", and "hip-hop" will all appear and must be collapsed into one dimension
-4. Normalize counts by dividing by the max count in the response (so the top tag is always 1.0)
-5. Store as a dense vector aligned to the vocabulary
-
-For example, Fakemink's tag response normalizes to:
-
-```python
-{
-    "cloud rap": 1.0,   # 100/100
-    "jerk": 0.49,       # 49/100
-    "pop rap": 0.11,    # 11/100
-    "british": 0.11,    # 11/100
-    "plugg": 0.05,      # 5/100
-    "hip-hop": 0.03,    # 3/100 (after cleaning "Hip-Hop" → "hip-hop")
-    "rap": 0.03,        # 3/100
-    "uk hip hop": 0.01,
-    "hip hop": 0.01,
-    "experimental hip hop": 0.01
-}
-```
-
-Artists with overlapping high-count tags (e.g. both have "cloud rap": ~1.0) will score high on cosine similarity. Low-count tags like "experimental hip hop" contribute very little — which is the right behaviour since they're low-confidence.
-
-Underground filter: `listeners < 500000` from `track.getInfo` (tune this threshold to taste).
-
----
-
-## Database Schema
-
-### Enable pgvector
+> The live schema is `migrations/init.sql` + `init_db()`. Connections use
+> `RealDictCursor` and `pgvector.psycopg2.register_vector`.
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
-```
+CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- for fast substring search on the cache
 
-### Songs table
-
-Embedding dimension is dynamic based on tag vocabulary size — start with 300 as a reasonable upper bound and expand as needed.
-
-```sql
 CREATE TABLE songs (
-    id              SERIAL PRIMARY KEY,
-    spotify_id      TEXT UNIQUE NOT NULL,
-    name            TEXT NOT NULL,
-    artist          TEXT NOT NULL,
-    listeners       INTEGER,
-    embedding       vector(300),
-    created_at      TIMESTAMPTZ DEFAULT now()
+    id         SERIAL PRIMARY KEY,
+    track_id   TEXT UNIQUE NOT NULL,   -- sha1(artist|||track)[:20]
+    name       TEXT NOT NULL,
+    artist     TEXT NOT NULL,
+    listeners  INTEGER,
+    image      TEXT,                   -- resolved album/artist cover URL
+    embedding  vector(300),
+    created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX ON songs USING hnsw (embedding vector_cosine_ops);
-```
+CREATE INDEX ON songs USING gin (name gin_trgm_ops);
+CREATE INDEX ON songs USING gin (artist gin_trgm_ops);
 
-### Tag vocabulary table
-
-```sql
 CREATE TABLE tag_vocab (
-    id      SERIAL PRIMARY KEY,
-    tag     TEXT UNIQUE NOT NULL
+    id  SERIAL PRIMARY KEY,   -- id == this tag's dimension in the embedding
+    tag TEXT UNIQUE NOT NULL
 );
-```
 
-### Graph tables
-
-```sql
 CREATE TABLE graph_nodes (
-    id          SERIAL PRIMARY KEY,
-    spotify_id  TEXT REFERENCES songs(spotify_id),
-    is_seed     BOOLEAN DEFAULT false,
-    created_at  TIMESTAMPTZ DEFAULT now()
+    id         SERIAL PRIMARY KEY,
+    track_id   TEXT UNIQUE REFERENCES songs(track_id),
+    is_seed    BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE graph_edges (
-    id              SERIAL PRIMARY KEY,
-    source_id       TEXT REFERENCES songs(spotify_id),
-    target_id       TEXT REFERENCES songs(spotify_id),
-    similarity      FLOAT,
-    created_at      TIMESTAMPTZ DEFAULT now()
+    id         SERIAL PRIMARY KEY,
+    source_id  TEXT REFERENCES songs(track_id),
+    target_id  TEXT REFERENCES songs(track_id),
+    similarity FLOAT,
+    created_at TIMESTAMPTZ DEFAULT now()
 );
-```
+CREATE UNIQUE INDEX ON graph_edges(source_id, target_id);
 
-### Feedback table
-
-```sql
 CREATE TABLE feedback (
-    id          SERIAL PRIMARY KEY,
-    spotify_id  TEXT REFERENCES songs(spotify_id),
-    action      TEXT CHECK (action IN ('accept', 'reject')),
-    created_at  TIMESTAMPTZ DEFAULT now()
+    id         SERIAL PRIMARY KEY,
+    track_id   TEXT REFERENCES songs(track_id),
+    action     TEXT CHECK (action IN ('accept', 'reject')),
+    created_at TIMESTAMPTZ DEFAULT now()
 );
 ```
+
+A row in `songs` can exist with `embedding IS NULL` — that's a search-cache hit
+we haven't embedded yet. Embedding happens lazily on seed / features / playlist.
 
 ---
 
@@ -284,133 +263,160 @@ CREATE TABLE feedback (
 ```
 GET /songs/search?q={query}
 ```
-Searches Spotify by song name or artist. Returns name, artist, spotify_id, album art. No Last.fm call here — keep search fast.
+Local DB ILIKE search + Last.fm `track.search` run in parallel, merged
+(Last.fm first, then local-only), capped at 15. Reuses cached covers; only calls
+Deezer/iTunes for tracks missing a real one. Upserts everything into `songs`.
 
 ```
-GET /songs/{spotify_id}/features
+GET /songs/{track_id}/status
 ```
-Fetches and caches Last.fm tags + listener count for a song. Returns the tag vector. If already in DB, returns cached version.
+Lightweight check: `{ exists, cached }` — `cached` means an embedding is already
+stored. The frontend uses this to warn about "cold" seeds (multiple Last.fm calls, slow).
 
----
+```
+GET /songs/{track_id}/features
+```
+Returns `{ track_id, name, artist, listeners, tags, embedding }`. Cache hit →
+returns stored embedding + tags. Cache miss → runs the full blended-tag embedding
+pipeline, stores it, and returns it.
+
+```
+POST /songs/backfill-covers?limit={n}
+```
+Maintenance: re-resolve covers for songs with NULL or placeholder images.
 
 ### Graph
 
 ```
 GET /graph
 ```
-Returns all current nodes and edges for the frontend to render.
-
-Response shape:
+All nodes + edges for the frontend.
 ```json
 {
-  "nodes": [
-    { "spotify_id": "abc", "name": "...", "artist": "...", "is_seed": true }
-  ],
-  "edges": [
-    { "source": "abc", "target": "xyz", "similarity": 0.91 }
-  ]
+  "nodes": [{ "track_id": "abc", "name": "...", "artist": "...", "is_seed": true, "listeners": 18200 }],
+  "edges": [{ "source": "abc", "target": "xyz", "similarity": 0.91 }]
 }
 ```
 
 ```
 POST /graph/seed
-body: { "spotify_id": "abc123" }
+body: { "track_id": "abc123" }
 ```
-Adds a song as a seed node. Internally: fetches Last.fm data → builds tag vector → stores embedding → triggers recommendation fetch.
-
----
+Builds the embedding (cache-aware), promotes to seed node, runs ANN + getSimilar
+bootstrap + recursive expansion, writes edges. Returns `{ track_id, name, artist }`.
+**The track must already exist in `songs` (i.e. have been returned by search) — 404 otherwise.**
 
 ### Recommendations
 
 ```
-GET /recommendations/{spotify_id}?k=10
+GET /recommendations/{track_id}?k=10&lambda=0.7&exclude=...
 ```
-Runs ANN search from the song's tag embedding. Returns k nearest neighbors filtered to `listeners < 500000`. Applies reject steering if the seed has prior negative feedback.
-
-Response shape:
+Steering → ANN over-fetch → per-artist cap → MMR re-rank → overflow backfill →
+Last.fm top-up. Returns `k` neighbors with `listeners < 500k`.
 ```json
-{
-  "recommendations": [
-    { "spotify_id": "xyz", "name": "...", "artist": "...", "similarity": 0.94, "listeners": 18200 }
-  ]
-}
+{ "recommendations": [{ "track_id": "xyz", "name": "...", "artist": "...", "similarity": 0.94, "listeners": 18200, "image": "..." }] }
 ```
-
----
+A cold seed (row exists but `embedding IS NULL`) is **embedded on demand** before
+ranking. An unknown `track_id` → **404**. An empty list means the seed genuinely
+has no underground neighbors locally or on Last.fm (or it has no usable tags at
+all, yielding an all-zero vector, which is guarded against).
 
 ### Feedback
 
 ```
 POST /feedback
-body: { "spotify_id": "xyz", "action": "accept" | "reject" }
+body: { "track_id": "xyz", "action": "accept" | "reject" }
 ```
+- `accept` → promote to seed node, copy the parent edge, rerun ANN from the
+  accepted node (with its own steering) and write new edges.
+- `reject` → log it; it becomes a negative that steers future recs from the parent seed.
 
-- `accept` → adds the song as a new graph node + seed, reruns recommendations on it
-- `reject` → stores the embedding as a negative, updates the steering vector for the parent seed
+### Playlists
+
+```
+POST /playlists/linear
+body: { "track_id": "abc", "n": 10, "niche": false, "exclude_ids": [] }
+
+POST /playlists/tree
+body: { "track_id": "abc", "n": 10, "max_depth": 3, "niche": false, "exclude_ids": [] }
+```
+Both return `{ "seed_track_id": "abc", "tracks": [PlaylistTrack...] }`.
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
-music-discovery/
-├── .env
-├── .env.example
-├── .gitignore
+discover/
+├── CLAUDE.md
+├── ARCHITECTURE.md           # Mermaid diagrams of every flow
+├── README.md
 ├── requirements.txt
 ├── render.yaml
-├── README.md
+├── .env.example
+├── migrations/
+│   └── init.sql              # canonical DDL (track_id schema)
 │
 ├── app/
-│   ├── main.py               # FastAPI app + router registration
-│   ├── config.py             # env vars, settings
-│   ├── db.py                 # postgres connection, pgvector helpers
+│   ├── main.py               # FastAPI app, CORS, router registration, startup init_db()
+│   ├── config.py             # env vars + tunables (MAX_LISTENERS, MMR_*, STEERING_ALPHA, ...)
+│   ├── db.py                 # psycopg2 connection, pgvector register, init_db() + migrations
 │   ├── models.py             # pydantic request/response models
 │   │
 │   ├── routers/
-│   │   ├── __init__.py
-│   │   ├── songs.py          # GET /songs/search, GET /songs/{id}/features
-│   │   ├── graph.py          # GET /graph, POST /graph/seed
-│   │   ├── recommendations.py
-│   │   └── feedback.py
+│   │   ├── songs.py          # search, status, features, backfill-covers
+│   │   ├── graph.py          # GET /graph, POST /graph/seed (+ bootstrap/expansion)
+│   │   ├── recommendations.py# ANN + steering + MMR + backfill + top-up
+│   │   ├── feedback.py       # accept/reject
+│   │   └── playlists.py      # linear + tree (BFS)
 │   │
 │   └── services/
-│       ├── __init__.py
-│       ├── spotify.py        # spotipy wrapper — search only
-│       ├── lastfm.py         # last.fm API — tags, listeners, similar tracks
-│       ├── embeddings.py     # tag dict → normalized vector
-│       └── steering.py       # reject vector math
+│       ├── lastfm.py         # Last.fm API + blend_tags
+│       ├── embeddings.py     # track_id, tag vocab, vector build, cosine, MMR
+│       ├── steering.py       # reject vector math
+│       ├── ingest.py         # embed_and_store_track (shared bootstrap/top-up building block)
+│       └── covers.py         # Deezer/iTunes cover resolution
 │
-└── migrations/
-    └── init.sql              # CREATE EXTENSION + CREATE TABLE statements
+└── frontend/                 # React + Vite + ReactFlow graph UI
 ```
 
 ---
 
-## Environment Variables
+## Configuration (`app/config.py`)
+
+```python
+STEERING_ALPHA      = 0.3      # reject steering strength
+MAX_LISTENERS       = 500000   # underground ceiling
+DEFAULT_K           = 10       # default neighbors per query
+EMBEDDING_DIM       = 300      # pgvector dimension
+MMR_LAMBDA          = 0.7      # relevance vs diversity (1.0 = pure relevance)
+MMR_POOL_MULTIPLIER = 3        # over-fetch k × this before re-ranking
+MMR_MAX_PER_ARTIST  = 2        # per-artist cap in the candidate pool
+```
+
+### Environment variables
 
 ```
-SPOTIFY_CLIENT_ID=
-SPOTIFY_CLIENT_SECRET=
 LASTFM_API_KEY=
+LASTFM_SHARED_SECRET=          # present in .env.example; not currently required
 DATABASE_URL=postgresql://user:password@localhost:5432/music_db
 ```
+
+Get a Last.fm key at [last.fm/api](https://www.last.fm/api).
 
 ---
 
 ## Local development
 
 ```bash
-# Install deps
 pip install -r requirements.txt
 
-# Run Postgres locally with pgvector via Docker
+# Postgres with pgvector via Docker
 docker run -e POSTGRES_PASSWORD=password -p 5432:5432 ankane/pgvector
 
-# Run migrations
+# Schema is auto-created on startup by init_db(), but you can also run it manually:
 psql $DATABASE_URL -f migrations/init.sql
 
-# Run the app
 uvicorn app.main:app --reload
 ```
 
@@ -418,62 +424,16 @@ uvicorn app.main:app --reload
 
 ## Deployment (Render)
 
-### 1. Add `render.yaml` to the root of your repo
+`render.yaml` provisions a web service + free Postgres. After the DB is up,
+enable pgvector once (`CREATE EXTENSION IF NOT EXISTS vector;`) — though
+`init_db()` also attempts this on startup. Set `LASTFM_API_KEY` in the dashboard;
+`DATABASE_URL` is wired automatically.
 
-```yaml
-services:
-  - type: web
-    name: music-discovery-api
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    envVars:
-      - key: SPOTIFY_CLIENT_ID
-        sync: false
-      - key: SPOTIFY_CLIENT_SECRET
-        sync: false
-      - key: LASTFM_API_KEY
-        sync: false
-      - key: DATABASE_URL
-        fromDatabase:
-          name: music-discovery-db
-          property: connectionString
-
-databases:
-  - name: music-discovery-db
-    plan: free
-```
-
-### 2. Enable pgvector on Render's Postgres
-
-Render supports pgvector but it's not enabled by default. After the DB is provisioned, connect via psql and run:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-```
-
-Then run the rest of your migrations from `migrations/init.sql`.
-
-### 3. Deploy
-
-- Push your repo to GitHub
-- Go to [render.com](https://render.com) → New → Blueprint
-- Point it at your repo — Render detects `render.yaml` and provisions everything automatically
-- Add `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, and `LASTFM_API_KEY` in the Render dashboard under Environment
-
-### Notes
-
-- Free tier spins down after 15 minutes of inactivity — first request after idle takes ~30s. Fine for a side project; upgrade to the $7/month plan if it gets annoying.
-- `DATABASE_URL` is wired automatically via `render.yaml` — don't set it manually.
+> Free tier spins down after 15 min idle — first request after idle takes ~30s.
 
 ---
 
-## What to build first
+## Notes for future work
 
-1. `config.py` + `db.py` — DB connection + pgvector setup
-2. `services/lastfm.py` — fetch tags + listener count, build tag vector
-3. `services/embeddings.py` — normalize tag dict → fixed-size vector
-4. `services/spotify.py` — search wrapper only
-5. `POST /graph/seed` + `GET /recommendations/{id}` — the core loop
-6. `POST /feedback` — accept/reject + steering
-7. `GET /graph` + `GET /songs/search` — supporting endpoints
+- Embedding dimension is fixed at 300; tags beyond vocab slot 300 are silently
+  dropped. Bump `EMBEDDING_DIM` (and the `vector(...)` column) if the vocab outgrows it.

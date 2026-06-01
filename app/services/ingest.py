@@ -3,7 +3,7 @@ from app.services import lastfm, embeddings
 from app.services.covers import get_cover_url
 
 
-def embed_and_store_track(artist: str, name: str, listener_cap: int) -> dict | None:
+def embed_and_store_track(artist: str, name: str, listener_cap: float) -> dict | None:
     """
     Ensure a track is embedded and stored in the songs table, fetching tags from
     Last.fm when we haven't seen it before. Returns the full song row

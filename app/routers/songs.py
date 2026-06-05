@@ -85,12 +85,16 @@ def _upsert_songs(tracks: list[dict]) -> None:
 @router.get("/search", response_model=list[SongSearchResult])
 def search_songs(q: str = Query(..., min_length=1)):
 
-    # Local DB lookup + Last.fm search run concurrently
+    # Local DB lookup + Last.fm search run concurrently.
+    # Last.fm failures (5xx, timeout, network) degrade gracefully to local-only.
     with ThreadPoolExecutor(max_workers=2) as pool:
         local_future = pool.submit(_search_local_songs, q)
         lastfm_future = pool.submit(lastfm.search_tracks, q)
         local_tracks = local_future.result()
-        lastfm_tracks = lastfm_future.result()
+        try:
+            lastfm_tracks = lastfm_future.result()
+        except Exception:
+            lastfm_tracks = []
 
     # Assign track_ids to Last.fm results
     for t in lastfm_tracks:
@@ -146,6 +150,93 @@ def search_songs(q: str = Query(..., min_length=1)):
         )
         for t in merged
     ]
+
+
+"""
+    Re-pack tag_vocab ids to be dense (1..N) and null all stale embeddings so
+    they get rebuilt on the next /reembed call. Idempotent: skips the repack
+    when max(id) == count(*) (ids are already dense). Run once after any DB
+    that was written by the old INSERT…ON CONFLICT DO UPDATE code that burned
+    SERIAL ids on conflicts, causing ids to race past EMBEDDING_DIM and silently
+    drop tags from every embedding.
+"""
+@router.post("/repack-vocab")
+def repack_vocab():
+    with get_cursor() as cursor:
+        cursor.execute("SELECT max(id) AS max_id, count(*) AS cnt FROM tag_vocab")
+        row = cursor.fetchone()
+    max_id = row["max_id"] or 0
+    count  = row["cnt"]    or 0
+
+    if max_id <= count:
+        return {"repacked": False, "tags": count, "nulled_embeddings": 0}
+
+    # Shift all ids up by 1_000_000 so new dense values (1..N) can't collide
+    # with any current value during the second UPDATE.
+    with get_cursor() as cursor:
+        cursor.execute("UPDATE tag_vocab SET id = id + 1000000")
+
+    with get_cursor() as cursor:
+        cursor.execute("""
+            UPDATE tag_vocab tv
+            SET id = r.new_id
+            FROM (
+                SELECT tag,
+                       (dense_rank() OVER (ORDER BY id - 1000000))::int AS new_id
+                FROM tag_vocab
+            ) r
+            WHERE r.tag = tv.tag
+        """)
+        cursor.execute(
+            "SELECT setval('tag_vocab_id_seq', (SELECT max(id) FROM tag_vocab))"
+        )
+
+    # All existing embeddings were built against the old id→slot mapping; null
+    # them so /reembed rebuilds every vector against the repacked vocab.
+    with get_cursor() as cursor:
+        cursor.execute("UPDATE songs SET embedding = NULL")
+        cursor.execute("SELECT count(*) AS cnt FROM songs")
+        nulled = cursor.fetchone()["cnt"]
+
+    return {"repacked": True, "tags": count, "nulled_embeddings": nulled}
+
+
+"""
+    Re-embed up to `limit` songs whose embedding is NULL (e.g. after /repack-vocab).
+    Each song re-fetches its tags from Last.fm and rebuilds the vector against the
+    current tag_vocab. Call repeatedly with the same limit until `remaining` hits 0.
+    Uses 2 parallel workers — Last.fm free tier allows ~5 req/s per key and each
+    song makes ~7 sequential calls, so this stays comfortably within the limit.
+"""
+@router.post("/reembed")
+def reembed_songs(limit: int = Query(default=50, ge=1, le=500)):
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT track_id, name, artist FROM songs WHERE embedding IS NULL LIMIT %s",
+            (limit,),
+        )
+        batch = cursor.fetchall()
+
+    def _reembed(song):
+        try:
+            result = ingest.embed_and_store_track(
+                song["artist"], song["name"], listener_cap=float("inf")
+            )
+            return result is not None
+        except Exception:
+            return False
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(_reembed, batch))
+
+    embedded = sum(1 for ok in outcomes if ok)
+    failed   = sum(1 for ok in outcomes if not ok)
+
+    with get_cursor() as cursor:
+        cursor.execute("SELECT count(*) AS cnt FROM songs WHERE embedding IS NULL")
+        remaining = cursor.fetchone()["cnt"]
+
+    return {"embedded": embedded, "failed": failed, "remaining": remaining}
 
 
 """

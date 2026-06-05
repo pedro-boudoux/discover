@@ -8,7 +8,7 @@ def _request(method: str, **params):
     params["method"] = method
     params["api_key"] = LASTFM_API_KEY
     params["format"] = "json"
-    resp = requests.get(BASE_URL, params=params)
+    resp = requests.get(BASE_URL, params=params, timeout=10)
     resp.raise_for_status()
     return resp.json()
 

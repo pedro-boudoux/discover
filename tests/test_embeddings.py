@@ -6,6 +6,7 @@ No database required — get_cursor is monkeypatched where needed.
 import hashlib
 import math
 import pytest
+from contextlib import contextmanager
 
 from app.services.embeddings import (
     make_track_id,
@@ -13,7 +14,62 @@ from app.services.embeddings import (
     mmr_rerank,
     build_tag_vector,
     dominant_tags,
+    get_or_create_tag_ids,
 )
+
+
+# ---------------------------------------------------------------------------
+# get_or_create_tag_ids — must NOT burn SERIAL ids for existing tags
+# ---------------------------------------------------------------------------
+
+class _VocabCursor:
+    """Fake cursor: SELECT returns an existing id or None; INSERT assigns the
+    next id and bumps an insert counter (a proxy for sequence consumption)."""
+
+    def __init__(self, existing, next_id):
+        self.existing = dict(existing)
+        self.next_id = next_id
+        self.insert_count = 0
+        self._last = None
+
+    def execute(self, sql, params=()):
+        verb = sql.strip().split()[0].upper()
+        tag = params[0]
+        if verb == "SELECT":
+            self._last = {"id": self.existing[tag]} if tag in self.existing else None
+        elif verb == "INSERT":
+            self.insert_count += 1
+            self.existing[tag] = self.next_id
+            self._last = {"id": self.next_id}
+            self.next_id += 1
+
+    def fetchone(self):
+        return self._last
+
+
+class TestGetOrCreateTagIds:
+    def _patch(self, monkeypatch, cursor):
+        @contextmanager
+        def fake_get_cursor():
+            yield cursor
+        monkeypatch.setattr("app.services.embeddings.get_cursor", fake_get_cursor)
+
+    def test_existing_tags_do_not_insert(self, monkeypatch):
+        """The whole point of the fix: existing tags are pure SELECTs, no INSERT,
+        so the SERIAL sequence never advances for them."""
+        cur = _VocabCursor(existing={"jazz": 1, "funk": 2}, next_id=300)
+        self._patch(monkeypatch, cur)
+        ids = get_or_create_tag_ids(["jazz", "funk"])
+        assert ids == {"jazz": 1, "funk": 2}
+        assert cur.insert_count == 0
+
+    def test_new_tag_inserted_once(self, monkeypatch):
+        cur = _VocabCursor(existing={"jazz": 1}, next_id=5)
+        self._patch(monkeypatch, cur)
+        ids = get_or_create_tag_ids(["jazz", "hyperpop"])
+        assert ids["jazz"] == 1
+        assert ids["hyperpop"] == 5
+        assert cur.insert_count == 1
 from app.config import EMBEDDING_DIM
 from tests.conftest import make_fake_get_cursor
 

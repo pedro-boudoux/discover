@@ -16,12 +16,24 @@ def get_or_create_tag_ids(tags: list[str]) -> dict[str, int]:
     tag_ids = {}
     with get_cursor() as cursor:
         for tag in tags:
-            cursor.execute("""
-                INSERT INTO tag_vocab (tag) VALUES (%s)
-                ON CONFLICT (tag) DO UPDATE SET tag = EXCLUDED.tag
-                RETURNING id
-            """, (tag,))
+            # SELECT first so existing tags don't consume a SERIAL value. The old
+            # `INSERT ... ON CONFLICT DO UPDATE` burned a sequence id on EVERY call
+            # (Postgres allocates one even when the insert conflicts), so ids raced
+            # far past the row count and past EMBEDDING_DIM — and build_tag_vector
+            # silently drops any tag whose id >= EMBEDDING_DIM. Only genuinely-new
+            # tags should claim an id.
+            cursor.execute("SELECT id FROM tag_vocab WHERE tag = %s", (tag,))
             row = cursor.fetchone()
+            if row is None:
+                cursor.execute(
+                    "INSERT INTO tag_vocab (tag) VALUES (%s) ON CONFLICT (tag) DO NOTHING RETURNING id",
+                    (tag,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    # lost a race to a concurrent insert — read the winner's id
+                    cursor.execute("SELECT id FROM tag_vocab WHERE tag = %s", (tag,))
+                    row = cursor.fetchone()
             tag_ids[tag] = row["id"]
     return tag_ids
 

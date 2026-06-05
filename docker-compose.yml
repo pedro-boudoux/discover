@@ -1,0 +1,31 @@
+# Local development database for the Underground Music Discovery backend.
+#
+#   docker compose up -d        # start Postgres + pgvector in the background
+#   docker compose down         # stop it (data is kept in the named volume)
+#   docker compose down -v      # stop it AND wipe the data
+#
+# Credentials match the default DATABASE_URL in app/config.py, so the backend
+# works even if .env has no DATABASE_URL set. init.sql is mounted into the
+# first-boot init hook so the `vector` extension exists before the app ever
+# connects (pgvector's register_vector fails otherwise on a fresh DB).
+services:
+  db:
+    image: ankane/pgvector
+    container_name: discover-db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: music_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - discover-pgdata:/var/lib/postgresql/data
+      - ./migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d music_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  discover-pgdata:

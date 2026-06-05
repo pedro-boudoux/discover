@@ -6,3 +6,6 @@ venv/
 *.egg-info/
 dist/
 build/
+
+# Hallmark design-skill artifacts
+.hallmark/

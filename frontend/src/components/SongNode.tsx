@@ -10,7 +10,7 @@ export type SongNodeData = {
   listeners?: number;
 };
 
-export const NODE_SIZE = 168;
+export const NODE_SIZE = 190;
 
 type Tone = "light" | "dark";
 
@@ -25,12 +25,12 @@ export function SongNode({ data, selected }: NodeProps<SongNodeData>) {
     <div
       style={{ width: NODE_SIZE, height: NODE_SIZE }}
       className={[
-        "relative rounded-xl overflow-hidden transition shadow-lg",
+        "relative rounded-2xl overflow-hidden transition-shadow",
         selected
-          ? "ring-2 ring-accent shadow-[0_0_0_4px_rgba(34,211,238,0.18)]"
+          ? "ring-2 ring-white/80 shadow-[0_0_0_4px_rgba(255,255,255,0.25)]"
           : data.isSeed
-            ? "ring-2 ring-accent/70"
-            : "ring-1 ring-edge hover:ring-neutral-400",
+            ? "ring-2 ring-white/60 shadow-lg"
+            : "ring-1 ring-white/30 hover:ring-white/60 shadow-md",
       ].join(" ")}
     >
       <Handle
@@ -54,34 +54,32 @@ export function SongNode({ data, selected }: NodeProps<SongNodeData>) {
           draggable={false}
         />
       ) : (
-        <div className="absolute inset-0 bg-gradient-to-br from-neutral-800 to-neutral-950" />
+        <div className="absolute inset-0 bg-gradient-to-br from-neutral-700 to-neutral-900" />
       )}
 
       <div
-        className="absolute inset-x-0 bottom-0 h-[60%] pointer-events-none"
+        className="absolute inset-x-0 bottom-0 h-[65%] pointer-events-none"
         style={{
-          background: `linear-gradient(to top, rgba(${gradientColor},0.95) 0%, rgba(${gradientColor},0.75) 45%, rgba(${gradientColor},0) 100%)`,
+          background: `linear-gradient(to top, rgba(${gradientColor},0.92) 0%, rgba(${gradientColor},0.7) 40%, rgba(${gradientColor},0) 100%)`,
         }}
       />
 
-      <div className={`absolute inset-x-0 bottom-0 p-2.5 ${textColorClass}`}>
-        <div className="truncate text-sm font-semibold leading-tight">
-          {data.name}
-        </div>
-        <div className={`truncate text-[11px] mt-0.5 ${subTextColorClass}`}>
-          {data.artist}
-        </div>
-        {data.isSeed && (
-          <div className="mt-1 text-[9px] uppercase tracking-[0.12em] font-medium text-accent">
-            seed
+      <div className={`absolute inset-x-0 bottom-0 p-3 ${textColorClass}`}>
+        <div className="truncate text-sm font-semibold leading-tight">{data.name}</div>
+        <div className={`truncate text-[11px] mt-0.5 ${subTextColorClass}`}>{data.artist}</div>
+        {data.isSeed ? (
+          <div className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.18em] font-medium text-white/80">
+            Source Song
           </div>
-        )}
-        {!data.isSeed && typeof data.similarity === "number" && (
-          <div className={`mt-1 text-[9px] tabular-nums ${subTextColorClass}`}>
-            sim {data.similarity.toFixed(2)}
-            {typeof data.listeners === "number" &&
-              ` · ${formatListeners(data.listeners)}`}
-          </div>
+        ) : (
+          typeof data.similarity === "number" && (
+            <div className={`mt-1 flex justify-between font-mono text-[9px] tabular-nums ${subTextColorClass}`}>
+              <span>sim {Math.round(data.similarity * 100)}%</span>
+              {typeof data.listeners === "number" && (
+                <span>{formatListeners(data.listeners)} listeners</span>
+              )}
+            </div>
+          )
         )}
       </div>
     </div>
@@ -90,7 +88,7 @@ export function SongNode({ data, selected }: NodeProps<SongNodeData>) {
 
 function formatListeners(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
 }
 
@@ -129,15 +127,12 @@ function useImageBrightness(src: string | null): Tone {
         const avg = total / count;
         if (!cancelled) setTone(avg > 0.55 ? "light" : "dark");
       } catch {
-        // CORS or read failure — keep default dark tone
+        // CORS or canvas read failure — keep default dark tone
       }
     };
 
     img.src = src;
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [src]);
 
   return tone;

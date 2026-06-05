@@ -4,9 +4,29 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>discover · underground music as a graph</title>
+    <title>pyo · underground music as a graph</title>
+
+    <!-- Chillax: preload + declare before any JS so Chrome registers it immediately -->
+    <link rel="preload" href="/fonts/chillax-medium.woff2" as="font" type="font/woff2" crossorigin />
+    <style>
+      @font-face {
+        font-family: 'Chillax';
+        src: url('/fonts/chillax-medium.woff2') format('woff2'),
+             url('/fonts/chillax-medium.woff') format('woff');
+        font-weight: 500;
+        font-display: block;
+        font-style: normal;
+      }
+    </style>
+
     <link rel="preconnect" href="https://rsms.me/" />
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap"
+    />
   </head>
   <body>
     <div id="root"></div>

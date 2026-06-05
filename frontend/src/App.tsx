@@ -19,6 +19,7 @@ import {
   type SimulationNodeDatum,
 } from "d3-force";
 import { Graph } from "./components/Graph";
+import { GraphInfo } from "./components/GraphInfo";
 import { NodePopover } from "./components/NodePopover";
 import { SearchBar } from "./components/SearchBar";
 import { NODE_SIZE, type SongNodeData } from "./components/SongNode";
@@ -111,9 +112,7 @@ export default function App() {
         );
       });
     simRef.current = sim;
-    return () => {
-      sim.stop();
-    };
+    return () => { sim.stop(); };
   }, [setNodes]);
 
   const syncSimulation = useCallback(
@@ -132,15 +131,10 @@ export default function App() {
 
       for (const n of structuralNodes) {
         if (simNodesRef.current.has(n.id)) continue;
-        const node: SimNode = {
-          id: n.id,
-          isSeed: n.isSeed,
-          x: n.x,
-          y: n.y,
-        };
+        const node: SimNode = { id: n.id, isSeed: n.isSeed, x: n.x, y: n.y };
         if (n.isSeed) {
-          node.fx = 0;
-          node.fy = 0;
+          node.fx = n.x;
+          node.fy = n.y;
         }
         simNodesRef.current.set(n.id, node);
       }
@@ -177,6 +171,8 @@ export default function App() {
         }
         setSeedingPhase(cached ? "warm" : "cold");
 
+        const isFirstSeed = simNodesRef.current.size === 0;
+
         await seedSong(song.track_id);
         const initialChildren = await expandFromTrack(
           song.track_id,
@@ -184,34 +180,49 @@ export default function App() {
           { k: 8, lambda: 0.7, niche: false, maxDepth: 3, excludeIds: [] },
         );
 
-        const seedPos = { x: 0, y: 0 };
+        let seedPos: Vec;
+        if (isFirstSeed) {
+          seedPos = { x: 0, y: 0 };
+        } else {
+          const existingSim = simNodesRef.current.get(song.track_id);
+          if (existingSim) {
+            seedPos = { x: existingSim.x ?? 0, y: existingSim.y ?? 0 };
+          } else {
+            const maxX = Math.max(
+              ...Array.from(simNodesRef.current.values()).map((n) => n.x ?? 0),
+              0,
+            );
+            seedPos = { x: maxX + 600, y: 0 };
+          }
+        }
+
         const childPositions = arcAround(initialChildren.length, seedPos);
+        const childPosMap = new Map(
+          initialChildren.map((c, i) => [c.track_id, childPositions[i]]),
+        );
 
         const seedNode: Node<SongNodeData> = {
           id: song.track_id,
           type: "song",
           position: seedPos,
-          data: {
-            name: song.name,
-            artist: song.artist,
-            image: song.image,
-            isSeed: true,
-          },
+          data: { name: song.name, artist: song.artist, image: song.image, isSeed: true },
         };
 
-        const childNodes: Node<SongNodeData>[] = initialChildren.map((c, i) => ({
-          id: c.track_id,
-          type: "song",
-          position: childPositions[i],
-          data: {
-            name: c.name,
-            artist: c.artist,
-            image: c.image,
-            isSeed: false,
-            similarity: c.similarity,
-            listeners: c.listeners,
-          },
-        }));
+        const newChildNodes: Node<SongNodeData>[] = initialChildren
+          .filter((c) => !simNodesRef.current.has(c.track_id))
+          .map((c) => ({
+            id: c.track_id,
+            type: "song",
+            position: childPosMap.get(c.track_id)!,
+            data: {
+              name: c.name,
+              artist: c.artist,
+              image: c.image,
+              isSeed: false,
+              similarity: c.similarity,
+              listeners: c.listeners,
+            },
+          }));
 
         const newEdges: Edge[] = initialChildren.map((c) => ({
           id: `${song.track_id}->${c.track_id}`,
@@ -219,21 +230,43 @@ export default function App() {
           target: c.track_id,
         }));
 
-        setNodes([seedNode, ...childNodes]);
-        setEdges(newEdges);
+        if (isFirstSeed) {
+          setNodes([seedNode, ...newChildNodes]);
+          setEdges(newEdges);
+        } else {
+          setNodes((nds) => {
+            const base = nds.some((n) => n.id === song.track_id)
+              ? nds.map((n) =>
+                  n.id === song.track_id
+                    ? { ...n, data: { ...n.data, isSeed: true } }
+                    : n,
+                )
+              : [...nds, seedNode];
+            return [...base, ...newChildNodes];
+          });
+          setEdges((eds) => {
+            let next = eds;
+            for (const e of newEdges) {
+              if (!next.some((existing) => existing.id === e.id)) {
+                next = addEdge(e, next);
+              }
+            }
+            return next;
+          });
+        }
 
         syncSimulation(
           [
-            { id: song.track_id, isSeed: true, x: 0, y: 0 },
-            ...initialChildren.map((c, i) => ({
-              id: c.track_id,
+            { id: song.track_id, isSeed: true, x: seedPos.x, y: seedPos.y },
+            ...newChildNodes.map((n) => ({
+              id: n.id,
               isSeed: false,
-              x: childPositions[i].x,
-              y: childPositions[i].y,
+              x: n.position.x,
+              y: n.position.y,
             })),
           ],
           newEdges.map((e) => ({ source: e.source!, target: e.target! })),
-          true,
+          isFirstSeed,
         );
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to seed song");
@@ -275,10 +308,7 @@ export default function App() {
         });
 
         const parentSim = simNodesRef.current.get(parentId);
-        const parentPos: Vec = {
-          x: parentSim?.x ?? 0,
-          y: parentSim?.y ?? 0,
-        };
+        const parentPos: Vec = { x: parentSim?.x ?? 0, y: parentSim?.y ?? 0 };
 
         const newChildren = children.filter(
           (c) => !simNodesRef.current.has(c.track_id),
@@ -339,7 +369,6 @@ export default function App() {
 
   const handleDeleteNode = useCallback(
     (nodeId: string) => {
-      // Edges that survive if nodeId is removed.
       const survivingEdges = edges.filter(
         (e) => e.source !== nodeId && e.target !== nodeId,
       );
@@ -351,8 +380,6 @@ export default function App() {
         adjacency.set(e.source, list);
       }
 
-      // Anything still reachable from a remaining seed is kept; everything
-      // else (the node itself plus any descendants it orphaned) is removed.
       const seeds = nodes
         .filter((n) => n.id !== nodeId && n.data.isSeed)
         .map((n) => n.id);
@@ -375,12 +402,9 @@ export default function App() {
 
       setNodes((nds) => nds.filter((n) => !removed.has(n.id)));
       setEdges((eds) =>
-        eds.filter(
-          (e) => !removed.has(e.source!) && !removed.has(e.target!),
-        ),
+        eds.filter((e) => !removed.has(e.source!) && !removed.has(e.target!)),
       );
 
-      // Keep the force simulation in sync with the pruned graph.
       for (const id of removed) simNodesRef.current.delete(id);
       simLinksRef.current = simLinksRef.current.filter(
         (l) => !removed.has(endId(l.source)) && !removed.has(endId(l.target)),
@@ -388,9 +412,7 @@ export default function App() {
       const sim = simRef.current;
       if (sim) {
         sim.nodes(Array.from(simNodesRef.current.values()));
-        sim
-          .force<ForceLink<SimNode, SimLink>>("link")
-          ?.links(simLinksRef.current);
+        sim.force<ForceLink<SimNode, SimLink>>("link")?.links(simLinksRef.current);
         sim.alpha(0.6).restart();
       }
 
@@ -425,32 +447,34 @@ export default function App() {
   }, []);
 
   const hasGraph = nodes.length > 0;
+  const trackIds = nodes.map((n) => n.id);
 
   return (
-    <div className="h-full w-full relative">
+    <div className="h-full w-full relative overflow-hidden">
+      {/* Ocean background — always present */}
+      <img
+        src="/ocean-bg.jpg"
+        alt=""
+        className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none"
+        draggable={false}
+      />
+
       {hasGraph ? (
-        <>
-          <Graph
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onNodeClick={handleNodeClick}
-            onPaneClick={() => setPopover(null)}
-            onNodeDragStart={handleNodeDragStart}
-            onNodeDrag={handleNodeDrag}
-            onNodeDragStop={handleNodeDragStop}
-          />
-          <div className="absolute top-3 left-3 z-10 w-[420px] max-w-[calc(100%-1.5rem)]">
-            <SearchBar
-              onPick={handleSeed}
-              placeholder="Search another song to reseed…"
-            />
-            {seedingPhase && (
-              <SeedingStatus phase={seedingPhase} className="mt-2" compact />
-            )}
-          </div>
-        </>
+        <GraphView
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={handleNodeClick}
+          onPaneClick={() => setPopover(null)}
+          onNodeDragStart={handleNodeDragStart}
+          onNodeDrag={handleNodeDrag}
+          onNodeDragStop={handleNodeDragStop}
+          onSeed={handleSeed}
+          seedingPhase={seedingPhase}
+          trackIds={trackIds}
+          edgeCount={edges.length}
+        />
       ) : (
         <Hero onPick={handleSeed} seedingPhase={seedingPhase} />
       )}
@@ -459,8 +483,8 @@ export default function App() {
         <div
           className="fixed z-30"
           style={{
-            left: Math.min(popover.x, window.innerWidth - 340),
-            top: Math.min(popover.y, window.innerHeight - 360),
+            left: Math.min(popover.x, window.innerWidth - 320),
+            top: Math.min(popover.y, window.innerHeight - 380),
           }}
         >
           <NodePopover
@@ -476,19 +500,113 @@ export default function App() {
       )}
 
       {error && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 bg-red-950 border border-red-900 text-red-200 text-sm rounded-md px-4 py-2 shadow-2xl">
-          {error}
-          <button
-            onClick={() => setError(null)}
-            className="ml-3 text-red-300 hover:text-white"
-          >
-            ×
-          </button>
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-40 overflow-hidden rounded-xl shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)]">
+          <div aria-hidden className="absolute inset-0 backdrop-blur-[4px] bg-white/90 rounded-xl pointer-events-none" />
+          <div className="relative px-4 py-2 text-sm text-red-600 flex items-center gap-3">
+            {error}
+            <button
+              onClick={() => setError(null)}
+              className="text-red-400 hover:text-red-600 transition-colors"
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+// ── Graph view ────────────────────────────────────────────────────────────────
+
+type GraphViewProps = {
+  nodes: ReturnType<typeof useNodesState>[0];
+  edges: ReturnType<typeof useEdgesState>[0];
+  onNodesChange: ReturnType<typeof useNodesState>[1];
+  onEdgesChange: ReturnType<typeof useEdgesState>[1];
+  onNodeClick: NodeMouseHandler;
+  onPaneClick: () => void;
+  onNodeDragStart?: NodeDragHandler;
+  onNodeDrag?: NodeDragHandler;
+  onNodeDragStop?: NodeDragHandler;
+  onSeed: (song: SongSearchResult) => void;
+  seedingPhase: SeedingPhase;
+  trackIds: string[];
+  edgeCount: number;
+};
+
+function GraphView({
+  nodes,
+  edges,
+  onNodesChange,
+  onEdgesChange,
+  onNodeClick,
+  onPaneClick,
+  onNodeDragStart,
+  onNodeDrag,
+  onNodeDragStop,
+  onSeed,
+  seedingPhase,
+  trackIds,
+  edgeCount,
+}: GraphViewProps) {
+  return (
+    <>
+      {/* Full-screen graph canvas */}
+      <div className="absolute inset-0">
+        <Graph
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={onNodeClick}
+          onPaneClick={onPaneClick}
+          onNodeDragStart={onNodeDragStart}
+          onNodeDrag={onNodeDrag}
+          onNodeDragStop={onNodeDragStop}
+        />
+      </div>
+
+      {/* pyo logo — top-left, partially above viewport like in the design */}
+      <div
+        className="absolute left-[26px] pointer-events-none z-10"
+        style={{ top: -27 }}
+      >
+        <span
+          className="font-display font-medium text-[120px] text-white/75 leading-none select-none"
+          style={{ textShadow: "0px 1px 4.1px rgba(0,0,0,0.25)" }}
+        >
+          pyo
+        </span>
+      </div>
+
+      {/* Graph Info — top-right */}
+      <div className="absolute right-5 top-[29px] z-10">
+        <GraphInfo
+          nodeCount={nodes.length}
+          edgeCount={edgeCount}
+          trackIds={trackIds}
+        />
+      </div>
+
+      {/* Search bar + seeding status — bottom-center */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 w-[430px] max-w-[calc(100%-80px)]">
+        {seedingPhase && (
+          <div className="mb-2 flex justify-center">
+            <SeedingStatus phase={seedingPhase} compact />
+          </div>
+        )}
+        <SearchBar
+          onPick={onSeed}
+          placeholder="Start typing to add more sources to the graph."
+          dropUp
+        />
+      </div>
+    </>
+  );
+}
+
+// ── Home / Hero ───────────────────────────────────────────────────────────────
 
 function Hero({
   onPick,
@@ -498,21 +616,35 @@ function Hero({
   seedingPhase: SeedingPhase;
 }) {
   return (
-    <div className="h-full w-full flex flex-col items-center justify-center px-6">
-      <div className="text-center mb-8">
-        <h1 className="text-4xl md:text-5xl font-medium tracking-tight mb-3">
-          Underground music, as a graph.
-        </h1>
-        <p className="text-muted max-w-md mx-auto">
-          Drop a song. We'll find sonic neighbors you've never heard. Every
-          recommendation becomes a node you can keep exploring.
-        </p>
+    <div
+      className="absolute flex flex-col items-start fade-up"
+      style={{ left: 60, top: "38%" }}
+    >
+      <span
+        className="font-display font-medium text-[128px] text-white leading-none select-none"
+        style={{ textShadow: "0px 2px 8px rgba(0,0,0,0.18)" }}
+      >
+        pyo
+      </span>
+      <p
+        className="text-white text-[17px] leading-normal mt-3 font-light"
+        style={{ textShadow: "0px 1px 4px rgba(0,0,0,0.3)" }}
+      >
+        stands for &ldquo;putting you on&rdquo; good music.
+      </p>
+      <div className="mt-6 w-[430px] max-w-[calc(100vw-80px)]">
+        <SearchBar
+          onPick={onPick}
+          placeholder="Tell us what you like, and we'll find similar."
+          autoFocus
+        />
+        {seedingPhase && <SeedingStatus phase={seedingPhase} className="mt-3" />}
       </div>
-      <SearchBar onPick={onPick} autoFocus />
-      {seedingPhase && <SeedingStatus phase={seedingPhase} className="mt-5" />}
     </div>
   );
 }
+
+// ── Seeding status indicator ──────────────────────────────────────────────────
 
 function SeedingStatus({
   phase,
@@ -526,30 +658,26 @@ function SeedingStatus({
   if (!phase) return null;
 
   const label =
-    phase === "checking"
-      ? "Checking song"
-      : phase === "warm"
-        ? "Building your graph"
-        : "Building your graph";
+    phase === "checking" ? "Checking song" : "Building your graph";
 
   return (
-    <div className={`flex flex-col items-start gap-1 ${className}`}>
-      <div
-        className={`flex items-center gap-2 text-muted ${
-          compact ? "text-xs" : "text-sm"
-        }`}
-      >
-        <Spinner size={compact ? 12 : 14} className="text-accent" />
-        <LoadingText text={label} />
+    <div className={`flex flex-col items-start gap-2 ${className}`}>
+      <div className="relative overflow-hidden rounded-full shadow-[0px_1px_4.1px_rgba(0,0,0,0.25)]">
+        <div aria-hidden className="absolute inset-0 backdrop-blur-[3px] bg-white/[0.22] pointer-events-none rounded-full" />
+        <div
+          className={`relative flex items-center gap-2.5 text-white ${compact ? "text-xs px-3 py-1.5" : "text-sm px-4 py-2"} font-medium`}
+          style={{ textShadow: "0px 1px 3px rgba(0,0,0,0.4)" }}
+        >
+          <Spinner size={compact ? 13 : 15} className="text-white" />
+          <span>{label}</span>
+        </div>
       </div>
       {phase === "cold" && (
         <div
-          className={`text-amber-300/90 ${
-            compact ? "text-[11px]" : "text-xs"
-          } pl-5`}
+          className={`text-white/80 ${compact ? "text-[11px]" : "text-xs"} font-medium pl-1`}
+          style={{ textShadow: "0px 1px 3px rgba(0,0,0,0.5)" }}
         >
-          First time seeing this song — fetching tags from Last.fm. This may take
-          30+ seconds.
+          First time — fetching from Last.fm, may take 30+ sec.
         </div>
       )}
     </div>

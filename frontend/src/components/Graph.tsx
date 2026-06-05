@@ -1,7 +1,5 @@
 import { useMemo } from "react";
 import ReactFlow, {
-  Background,
-  Controls,
   type DefaultEdgeOptions,
   type Edge,
   type Node,
@@ -14,10 +12,11 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { SongNode, type SongNodeData } from "./SongNode";
+import { ZoomControls } from "./ZoomControls";
 
 const defaultEdgeOptions: DefaultEdgeOptions = {
   type: "simplebezier",
-  style: { stroke: "#3f3f46", strokeWidth: 1.25, opacity: 0.55 },
+  style: { stroke: "rgba(255,255,255,0.5)", strokeWidth: 1.5, opacity: 0.8 },
 };
 
 type Props = {
@@ -65,22 +64,9 @@ export function Graph({
       minZoom={0.2}
       maxZoom={1.6}
     >
-      <Background color="#1f1f1f" gap={28} size={1} />
-      <Controls
-        className="!bg-canvas !border !border-edge"
-        showInteractive={false}
-      />
-      <Panel position="top-right" className="!m-3">
-        <Legend nodeCount={nodes.length} edgeCount={edges.length} />
+      <Panel position="bottom-left" className="!m-0 !ml-[26px] !mb-8">
+        <ZoomControls />
       </Panel>
     </ReactFlow>
-  );
-}
-
-function Legend({ nodeCount, edgeCount }: { nodeCount: number; edgeCount: number }) {
-  return (
-    <div className="bg-canvas/80 backdrop-blur border border-edge rounded-md px-3 py-1.5 text-xs text-muted tabular-nums">
-      {nodeCount} nodes · {edgeCount} edges
-    </div>
   );
 }

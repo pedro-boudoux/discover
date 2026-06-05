@@ -91,6 +91,13 @@ export type ExpandedTrack = {
   image: string | null;
 };
 
+export function getDominantTags(track_ids: string[], top_n = 5) {
+  return request<{ tags: Array<{ tag: string; weight: number; count: number; share: number }> }>(
+    `/graph/tags`,
+    { method: "POST", body: JSON.stringify({ track_ids, top_n }) },
+  );
+}
+
 export async function expandFromTrack(
   track_id: string,
   method: ExpansionMethod,

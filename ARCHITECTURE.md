@@ -236,7 +236,7 @@ flowchart TD
     short1 -->|yes| backfill["backfill from overflow<br/>(capped-out, most similar first)"]
     short1 -->|no| out
     backfill --> short2{"still < k?"}
-    short2 -->|yes| topup["topup_from_lastfm<br/>seed getSimilar(30) → embed+store<br/>score vs steered embedding"]
+    short2 -->|yes| topup["topup_from_lastfm<br/>seed getSimilar(30) → embed+store<br/>(empty? → similar-artist top tracks)<br/>score vs steered embedding"]
     short2 -->|no| out
     topup --> out(["Recommendation[]"])
 ```

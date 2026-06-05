@@ -43,6 +43,18 @@ class TestTopupFromLastfm:
       - embeddings.cosine_similarity (via embeddings.make_track_id is a pure fn)
     """
 
+    @pytest.fixture(autouse=True)
+    def _no_artist_fallback(self, monkeypatch):
+        """
+        Isolate the primary (track.getSimilar) path by default: the similar-artist
+        cold-start fallback is a no-op unless a test explicitly enables it. Keeps
+        these tests off the network when `added < needed`.
+        """
+        monkeypatch.setattr(
+            "app.routers.recommendations.lastfm.get_similar_artists",
+            MagicMock(return_value=[]),
+        )
+
     def _patch(self, monkeypatch, *, seed_row, similar_tracks, embed_results, cos_sims=None):
         """
         Wire up all seams for a topup_from_lastfm call.
@@ -427,6 +439,84 @@ class TestTopupFromLastfm:
         # Should only appear once despite two entries in similar
         track_ids = [r["track_id"] for r in result]
         assert track_ids.count(actress_id) == 1
+
+    # ---- cold-start fallback to similar-artist top tracks -----------------
+
+    def test_falls_back_to_similar_artist_top_tracks(self, monkeypatch):
+        """
+        When the seed has no track.getSimilar, mine the seed's similar artists'
+        top tracks (artist.getSimilar → artist.getTopTracks) instead.
+        """
+        seed_row = {"name": "Mia & Sebastian's Theme", "artist": "Justin Hurwitz"}
+        monkeypatch.setattr(
+            "app.routers.recommendations.get_cursor",
+            make_fake_get_cursor([seed_row]),
+        )
+        # primary path is empty
+        monkeypatch.setattr(
+            "app.routers.recommendations.lastfm.get_similar_tracks",
+            MagicMock(return_value=[]),
+        )
+        # fallback: one similar artist with one top track (overrides autouse stub)
+        monkeypatch.setattr(
+            "app.routers.recommendations.lastfm.get_similar_artists",
+            MagicMock(return_value=[{"artist": "Tim Simonec", "match": 1.0}]),
+        )
+        top_tracks_mock = MagicMock(return_value=[{"artist": "Tim Simonec", "name": "Too Hip To Retire"}])
+        monkeypatch.setattr(
+            "app.routers.recommendations.lastfm.get_artist_top_tracks",
+            top_tracks_mock,
+        )
+        song = {
+            "track_id": make_track_id("Tim Simonec", "Too Hip To Retire"),
+            "name": "Too Hip To Retire", "artist": "Tim Simonec",
+            "listeners": 85_803, "image": None, "embedding": make_vector(0.5),
+        }
+        monkeypatch.setattr(
+            "app.routers.recommendations.ingest.embed_and_store_track",
+            MagicMock(return_value=song),
+        )
+        monkeypatch.setattr(
+            "app.routers.recommendations.embeddings.cosine_similarity",
+            MagicMock(return_value=0.79),
+        )
+
+        from app.routers.recommendations import topup_from_lastfm
+        result = topup_from_lastfm(
+            make_track_id("Justin Hurwitz", "Mia & Sebastian's Theme"),
+            make_vector(),
+            set(),
+            needed=3,
+        )
+
+        assert len(result) == 1
+        assert result[0]["track_id"] == song["track_id"]
+        top_tracks_mock.assert_called_once()
+
+    def test_fallback_skipped_when_primary_satisfies_needed(self, monkeypatch):
+        """If track.getSimilar already fills `needed`, the artist fallback is never consulted."""
+        seed_row = {"name": "Archangel", "artist": "Burial"}
+        similar = [{"artist": "Actress", "name": "Hubble"}]
+        actress_song = {
+            "track_id": make_track_id("Actress", "Hubble"), "name": "Hubble",
+            "artist": "Actress", "listeners": 2_000, "image": None, "embedding": make_vector(0.5),
+        }
+        self._patch(
+            monkeypatch, seed_row=seed_row, similar_tracks=similar,
+            embed_results=[actress_song], cos_sims=[0.9],
+        )
+        artist_fallback = MagicMock(side_effect=AssertionError("fallback must not run"))
+        monkeypatch.setattr(
+            "app.routers.recommendations.lastfm.get_similar_artists", artist_fallback,
+        )
+
+        from app.routers.recommendations import topup_from_lastfm
+        result = topup_from_lastfm(
+            make_track_id("Burial", "Archangel"), make_vector(), set(), needed=1,
+        )
+
+        assert len(result) == 1
+        artist_fallback.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

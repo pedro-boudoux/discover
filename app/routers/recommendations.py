@@ -10,6 +10,8 @@ router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 # How many of the seed's Last.fm similar tracks to try when the local pool
 # can't satisfy the requested k (the exhaustion top-up).
 TOPUP_SIMILAR_LIMIT = 30
+# Per similar artist, how many top tracks to try in the cold-start fallback.
+TOPUP_ARTIST_TOPTRACKS_LIMIT = 10
 
 
 def topup_from_lastfm(seed_track_id: str, query_embedding: list, exclude_ids: set[str], needed: int) -> list[dict]:
@@ -19,6 +21,10 @@ def topup_from_lastfm(seed_track_id: str, query_embedding: list, exclude_ids: se
     haven't seen, and returns up to `needed` of them scored against the query
     embedding. Each Last.fm track is a few API calls, so this only runs when the
     vector search genuinely came up short.
+
+    If the seed has no usable `track.getSimilar` (instrumental / soundtrack /
+    obscure tracks), fall back to the seed's similar artists' top tracks — the
+    same cold-start escape hatch used when seeding the graph.
     """
     with get_cursor() as cursor:
         cursor.execute(
@@ -29,31 +35,41 @@ def topup_from_lastfm(seed_track_id: str, query_embedding: list, exclude_ids: se
     if not seed:
         return []
 
-    similar = lastfm.get_similar_tracks(seed["artist"], seed["name"], limit=TOPUP_SIMILAR_LIMIT)
-
     added: list[dict] = []
     excluded = set(exclude_ids)
-    for sim in similar:
-        if len(added) >= needed:
-            break
-        try:
-            sim_id = embeddings.make_track_id(sim["artist"], sim["name"])
-            if sim_id in excluded:
+
+    def absorb(candidates: list[dict]) -> None:
+        for cand in candidates:
+            if len(added) >= needed:
+                return
+            try:
+                cand_id = embeddings.make_track_id(cand["artist"], cand["name"])
+                if cand_id in excluded:
+                    continue
+                song = ingest.embed_and_store_track(cand["artist"], cand["name"], MAX_LISTENERS)
+                if song is None:
+                    continue
+                added.append({
+                    "track_id": song["track_id"],
+                    "name": song["name"],
+                    "artist": song["artist"],
+                    "listeners": song["listeners"] or 0,
+                    "image": song["image"],
+                    "similarity": round(embeddings.cosine_similarity(query_embedding, song["embedding"]), 3),
+                })
+                excluded.add(cand_id)
+            except Exception:
                 continue
-            song = ingest.embed_and_store_track(sim["artist"], sim["name"], MAX_LISTENERS)
-            if song is None:
-                continue
-            added.append({
-                "track_id": song["track_id"],
-                "name": song["name"],
-                "artist": song["artist"],
-                "listeners": song["listeners"] or 0,
-                "image": song["image"],
-                "similarity": round(embeddings.cosine_similarity(query_embedding, song["embedding"]), 3),
-            })
-            excluded.add(sim_id)
-        except Exception:
-            continue
+
+    # primary: the seed's own similar tracks
+    absorb(lastfm.get_similar_tracks(seed["artist"], seed["name"], limit=TOPUP_SIMILAR_LIMIT))
+
+    # cold-start fallback: similar artists' top tracks (same blind spot as seeding)
+    if len(added) < needed:
+        for sa in lastfm.get_similar_artists(seed["artist"]):
+            if len(added) >= needed:
+                break
+            absorb(lastfm.get_artist_top_tracks(sa["artist"], limit=TOPUP_ARTIST_TOPTRACKS_LIMIT))
 
     return added
 

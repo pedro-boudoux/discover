@@ -123,7 +123,7 @@ similarity; low-count tags contribute little, which is the right behaviour.
 3. **Per-artist cap** — at most `MMR_MAX_PER_ARTIST` (2) per artist in the pool; the rest go to an overflow list.
 4. **MMR re-rank** — `score = λ·relevance − (1−λ)·redundancy` (`λ = 0.7`) for relevance/diversity balance.
 5. **Backfill** — if still short of `k`, refill from the capped-out overflow (most similar first).
-6. **Top-up** — if *still* short, fetch the seed's Last.fm `getSimilar`, embed+store, and score against the steered query.
+6. **Top-up** — if *still* short, fetch the seed's Last.fm `getSimilar`, embed+store, and score against the steered query. If the seed has no `getSimilar` at all, fall back to its **similar artists' top tracks** (same cold-start escape hatch as seeding).
 
 ### Vector steering on reject
 

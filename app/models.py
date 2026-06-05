@@ -91,3 +91,21 @@ class TreePlaylistRequest(BaseModel):
 class PlaylistResponse(BaseModel):
     seed_track_id: str
     tracks: list[PlaylistTrack]
+
+
+class GraphTagsRequest(BaseModel):
+    # Optional set of track_ids to scope to (the frontend's current node set).
+    # Empty → aggregate over the whole persisted graph (nodes + edge endpoints).
+    track_ids: list[str] = []
+    top_n: int = 15
+
+
+class DominantTag(BaseModel):
+    tag: str
+    weight: float    # summed normalized presence across the songs
+    count: int       # how many songs carry this tag
+    share: float     # fraction of total summed weight (rough "% of the vibe")
+
+
+class DominantTagsResponse(BaseModel):
+    tags: list[DominantTag]

@@ -122,6 +122,44 @@ def cosine_similarity(a: list, b: list) -> float:
     return float(dot / (norm_a * norm_b))
 
 
+def dominant_tags(vectors: list[list], id_to_tag: dict[int, str], top_n: int = 15) -> list[dict]:
+    """
+    Aggregate the dominant tags across a set of song embeddings (e.g. every node
+    in a graph) so the UI can show which genres are taking over.
+
+    Each embedding slot `i` corresponds to tag_vocab id `i` (build_tag_vector
+    writes a tag's normalized 0..1 weight into slot == its vocab id). We sum those
+    weights per slot across all vectors; the result is the tag's total presence in
+    the graph. `count` is how many songs carry the tag, and `share` is the tag's
+    fraction of the summed weight (a rough "% of the vibe"). Returns the top `top_n`
+    by weight, descending.
+    """
+    if not vectors:
+        return []
+
+    weight: dict[int, float] = {}
+    count: dict[int, int] = {}
+    for vec in vectors:
+        for i, x in enumerate(vec):
+            if x > 0:
+                weight[i] = weight.get(i, 0.0) + x
+                count[i] = count.get(i, 0) + 1
+
+    total = sum(weight.values()) or 1.0
+    rows = [
+        {
+            "tag": id_to_tag[i],
+            "weight": round(w, 4),
+            "count": count[i],
+            "share": round(w / total, 4),
+        }
+        for i, w in weight.items()
+        if i in id_to_tag
+    ]
+    rows.sort(key=lambda r: r["weight"], reverse=True)
+    return rows[:top_n]
+
+
 def mmr_rerank(query_embedding: list, candidates: list[dict], k: int, lambda_param: float) -> list[dict]:
     """
     Maximal Marginal Relevance re-ranking. Each candidate dict must have an 'embedding' key.

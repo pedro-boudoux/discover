@@ -304,6 +304,17 @@ All nodes + edges for the frontend.
 ```
 
 ```
+POST /graph/tags
+body: { "track_ids": ["abc", ...], "top_n": 15 }
+```
+Dominant tags across a graph (issue #2) — "which genres are taking over". Sums
+each song's normalized tag weights (from its embedding) across the node set and
+returns the top `top_n` as `{ tag, weight, count, share }` (`share` ≈ % of the
+vibe). Pass `track_ids` to scope to the UI's current node set; omit it to
+aggregate the whole persisted graph (nodes + both ends of every edge). Empty set
+or no embeddings → `{ "tags": [] }`.
+
+```
 POST /graph/seed
 body: { "track_id": "abc123" }
 ```

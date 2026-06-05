@@ -12,9 +12,56 @@ from app.services.embeddings import (
     cosine_similarity,
     mmr_rerank,
     build_tag_vector,
+    dominant_tags,
 )
 from app.config import EMBEDDING_DIM
 from tests.conftest import make_fake_get_cursor
+
+
+# ---------------------------------------------------------------------------
+# dominant_tags
+# ---------------------------------------------------------------------------
+
+class TestDominantTags:
+    def _vec(self, slot_to_weight):
+        v = [0.0] * EMBEDDING_DIM
+        for slot, w in slot_to_weight.items():
+            v[slot] = w
+        return v
+
+    def test_empty_vectors_returns_empty(self):
+        assert dominant_tags([], {1: "jazz"}, top_n=5) == []
+
+    def test_sums_weight_and_counts_songs(self):
+        # slot 1 = jazz appears in both songs; slot 2 = funk in one
+        vectors = [self._vec({1: 1.0, 2: 0.5}), self._vec({1: 0.5})]
+        id_to_tag = {1: "jazz", 2: "funk"}
+        out = dominant_tags(vectors, id_to_tag, top_n=5)
+
+        jazz = next(r for r in out if r["tag"] == "jazz")
+        funk = next(r for r in out if r["tag"] == "funk")
+        assert jazz["weight"] == 1.5 and jazz["count"] == 2
+        assert funk["weight"] == 0.5 and funk["count"] == 1
+        # jazz (1.5) outranks funk (0.5)
+        assert [r["tag"] for r in out] == ["jazz", "funk"]
+
+    def test_share_is_fraction_of_total_weight(self):
+        vectors = [self._vec({1: 3.0, 2: 1.0})]
+        out = dominant_tags(vectors, {1: "a", 2: "b"}, top_n=5)
+        shares = {r["tag"]: r["share"] for r in out}
+        assert shares["a"] == 0.75 and shares["b"] == 0.25
+
+    def test_top_n_caps_results(self):
+        vectors = [self._vec({1: 0.9, 2: 0.8, 3: 0.7, 4: 0.6})]
+        id_to_tag = {1: "a", 2: "b", 3: "c", 4: "d"}
+        out = dominant_tags(vectors, id_to_tag, top_n=2)
+        assert [r["tag"] for r in out] == ["a", "b"]
+
+    def test_slots_without_a_vocab_tag_are_skipped(self):
+        # slot 2 has weight but no entry in id_to_tag → excluded
+        vectors = [self._vec({1: 1.0, 2: 0.9})]
+        out = dominant_tags(vectors, {1: "a"}, top_n=5)
+        assert [r["tag"] for r in out] == ["a"]
 
 
 # ---------------------------------------------------------------------------

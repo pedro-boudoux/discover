@@ -1,5 +1,8 @@
 from fastapi import APIRouter, HTTPException
-from app.models import GraphResponse, GraphNode, GraphEdge, SeedRequest
+from app.models import (
+    GraphResponse, GraphNode, GraphEdge, SeedRequest,
+    GraphTagsRequest, DominantTagsResponse,
+)
 from app.db import get_cursor
 from app.services import lastfm, embeddings, ingest
 from app.config import MAX_LISTENERS, DEFAULT_K
@@ -43,6 +46,40 @@ def get_graph():
         ]
 
     return GraphResponse(nodes=nodes, edges=edges)
+
+
+@router.post("/tags", response_model=DominantTagsResponse)
+def graph_dominant_tags(request: GraphTagsRequest):
+    """
+    Dominant tags across a graph — which genres are taking over (issue #2).
+
+    Pass `track_ids` to scope to a specific node set (e.g. exactly what the UI is
+    showing); omit it to aggregate over the whole persisted graph (every song that
+    is a node or sits on either end of an edge).
+    """
+    with get_cursor() as cursor:
+        if request.track_ids:
+            cursor.execute(
+                "SELECT embedding FROM songs WHERE track_id = ANY(%s) AND embedding IS NOT NULL",
+                (request.track_ids,),
+            )
+        else:
+            cursor.execute("""
+                SELECT embedding FROM songs
+                WHERE embedding IS NOT NULL
+                AND track_id IN (
+                    SELECT track_id FROM graph_nodes
+                    UNION SELECT source_id FROM graph_edges
+                    UNION SELECT target_id FROM graph_edges
+                )
+            """)
+        vectors = [list(r["embedding"]) for r in cursor.fetchall()]
+
+        cursor.execute("SELECT id, tag FROM tag_vocab")
+        id_to_tag = {r["id"]: r["tag"] for r in cursor.fetchall()}
+
+    tags = embeddings.dominant_tags(vectors, id_to_tag, request.top_n)
+    return DominantTagsResponse(tags=tags)
 
 
 @router.post("/seed")

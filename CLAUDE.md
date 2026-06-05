@@ -372,9 +372,9 @@ discover/
 │   │
 │   └── services/
 │       ├── lastfm.py         # Last.fm API + blend_tags
-│       ├── embeddings.py     # track_id, tag vocab, vector build, cosine, MMR
+│       ├── embeddings.py     # track_id, tag vocab, vector build, cosine, MMR, ann_search
 │       ├── steering.py       # reject vector math
-│       ├── ingest.py         # embed_and_store_track (shared bootstrap/top-up building block)
+│       ├── ingest.py         # embed_and_store_track — the one tag→vector pipeline, called everywhere
 │       └── covers.py         # Deezer/iTunes cover resolution
 │
 └── frontend/                 # React + Vite + ReactFlow graph UI
@@ -435,5 +435,11 @@ enable pgvector once (`CREATE EXTENSION IF NOT EXISTS vector;`) — though
 
 ## Notes for future work
 
+- **Two shared building blocks — don't re-inline them.** Every embedding goes
+  through `ingest.embed_and_store_track` (the one tag→vector pipeline, cache-aware)
+  and every nearest-neighbor lookup goes through `embeddings.ann_search`. Routers
+  call these instead of repeating the Last.fm pipeline or the `embedding <=>`
+  SQL. If you need a slightly different query/pipeline, extend the helper rather
+  than copying it back into a router.
 - Embedding dimension is fixed at 300; tags beyond vocab slot 300 are silently
   dropped. Bump `EMBEDDING_DIM` (and the `vector(...)` column) if the vocab outgrows it.

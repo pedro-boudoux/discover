@@ -1,7 +1,7 @@
 import hashlib
 import numpy as np
 from app.db import get_cursor
-from app.config import EMBEDDING_DIM
+from app.config import EMBEDDING_DIM, MAX_LISTENERS, DEFAULT_K
 
 
 def make_track_id(artist: str, track: str) -> str:
@@ -49,6 +49,63 @@ def build_tag_vector(tag_counts: dict[str, int]) -> list[float]:
             vector[vocab[tag]] = count / max_count
 
     return vector
+
+
+def ann_search(
+    embedding: list,
+    *,
+    listeners_cap: int = MAX_LISTENERS,
+    exclude_ids=(),
+    allowed_ids=None,
+    limit: int = DEFAULT_K,
+    cursor=None,
+) -> list[dict]:
+    """
+    Approximate-nearest-neighbor search over the songs table — the single source
+    of truth for vector lookups used by seeding, recommendations and playlists.
+
+    Returns songs ordered by cosine distance to `embedding`, filtered to those
+    under `listeners_cap`, never including `exclude_ids`, and (if `allowed_ids` is
+    a non-empty set) restricted to that set. Pass an open `cursor` to reuse a
+    transaction; otherwise one is opened for the query.
+    """
+    use_allowed = bool(allowed_ids)
+    allowed_clause = "AND track_id = ANY(%s)" if use_allowed else ""
+    sql = f"""
+        SELECT track_id, name, artist, listeners, image, embedding,
+               1 - (embedding <=> %s::vector) AS similarity
+        FROM songs
+        WHERE embedding IS NOT NULL
+          AND listeners < %s
+          AND track_id != ALL(%s)
+          {allowed_clause}
+        ORDER BY embedding <=> %s::vector
+        LIMIT %s
+    """
+    params = [embedding, listeners_cap, list(exclude_ids)]
+    if use_allowed:
+        params.append(list(allowed_ids))
+    params += [embedding, limit]
+
+    def _run(cur) -> list[dict]:
+        cur.execute(sql, params)
+        return [
+            {
+                "track_id": r["track_id"],
+                "name": r["name"],
+                "artist": r["artist"],
+                "listeners": r["listeners"],
+                "image": r["image"],
+                "embedding": [float(x) for x in r["embedding"]],
+                "similarity": round(r["similarity"], 3),
+            }
+            for r in cur.fetchall()
+        ]
+
+    if cursor is not None:
+        return _run(cursor)
+    with get_cursor() as cur:
+        return _run(cur)
 
 
 """

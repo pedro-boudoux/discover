@@ -95,30 +95,12 @@ def get_recommendations(
     steered_embedding = steering.apply_steering(base_embedding, track_id)
     exclude_ids = list({track_id, *exclude})
 
-    with get_cursor() as cursor:
-        cursor.execute("""
-            SELECT track_id, name, artist, listeners, image, embedding,
-                   1 - (embedding <=> %s::vector) AS similarity
-            FROM songs
-            WHERE embedding IS NOT NULL
-            AND listeners < %s
-            AND track_id != ALL(%s)
-            ORDER BY embedding <=> %s::vector
-            LIMIT %s
-        """, (steered_embedding, MAX_LISTENERS, exclude_ids, steered_embedding, k * MMR_POOL_MULTIPLIER))
-
-        pool = [
-            {
-                "track_id": r["track_id"],
-                "name": r["name"],
-                "artist": r["artist"],
-                "listeners": r["listeners"],
-                "image": r["image"],
-                "embedding": list(r["embedding"]),
-                "similarity": round(r["similarity"], 3),
-            }
-            for r in cursor.fetchall()
-        ]
+    pool = embeddings.ann_search(
+        steered_embedding,
+        listeners_cap=MAX_LISTENERS,
+        exclude_ids=exclude_ids,
+        limit=k * MMR_POOL_MULTIPLIER,
+    )
 
     artist_counts: dict[str, int] = {}
     capped_pool = []

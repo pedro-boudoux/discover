@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from app.models import FeedbackRequest, FeedbackResponse
 from app.db import get_cursor
-from app.services import steering
+from app.services import steering, embeddings
 from app.config import MAX_LISTENERS, DEFAULT_K
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
@@ -53,17 +53,15 @@ def submit_feedback(request: FeedbackRequest):
                 base_embedding = list(song_row["embedding"])
                 steered = steering.apply_steering(base_embedding, request.track_id)
 
-                cursor.execute("""
-                    SELECT track_id, 1 - (embedding <=> %s::vector) AS similarity
-                    FROM songs
-                    WHERE embedding IS NOT NULL
-                    AND listeners < %s
-                    AND track_id != %s
-                    ORDER BY embedding <=> %s::vector
-                    LIMIT %s
-                """, (steered, MAX_LISTENERS, request.track_id, steered, DEFAULT_K))
+                neighbors = embeddings.ann_search(
+                    steered,
+                    listeners_cap=MAX_LISTENERS,
+                    exclude_ids=[request.track_id],
+                    limit=DEFAULT_K,
+                    cursor=cursor,
+                )
 
-                for r in cursor.fetchall():
+                for r in neighbors:
                     cursor.execute("""
                         INSERT INTO graph_edges (source_id, target_id, similarity)
                         VALUES (%s, %s, %s)

@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Query, HTTPException
 from app.models import SongSearchResult, TrackFeatures
-from app.services import lastfm, embeddings as emb_service
+from app.services import lastfm, ingest, embeddings as emb_service
 from app.services.covers import get_cover_url, is_broken_image
 from app.db import get_cursor
 from app.config import EMBEDDING_DIM
@@ -206,66 +206,44 @@ def get_song_status(track_id: str):
 @router.get("/{track_id}/features", response_model=TrackFeatures)
 def get_song_features(track_id: str):
     with get_cursor() as cursor:
-
-        # fetch that track_id in the songs table
         cursor.execute(
             "SELECT name, artist, listeners, embedding FROM songs WHERE track_id = %s",
             (track_id,)
         )
         row = cursor.fetchone()
 
-        # raise exception if dne
-        if not row:
-            raise HTTPException(404, "Track not found — search for it first")
+    if not row:
+        raise HTTPException(404, "Track not found — search for it first")
 
-        # if embedding!=null that means that we've seen this song before (cache hit)
-        # we can just return the track
-        if row["embedding"] is not None:
-            embedding = list(row["embedding"])
-            cursor.execute("SELECT id, tag FROM tag_vocab WHERE id < %s", (EMBEDDING_DIM,))
-            tags = [
-                r["tag"] for r in cursor.fetchall()
-                if r["id"] < len(embedding) and embedding[r["id"]] > 0
-            ]
-            return TrackFeatures(
-                track_id=track_id,
-                name=row["name"],
-                artist=row["artist"],
-                listeners=row["listeners"] or 0,
-                tags=tags,
-                embedding=embedding
-            )
+    if row["embedding"] is not None:
+        # cache hit — reuse the stored vector, no API calls
+        name, artist = row["name"], row["artist"]
+        listeners = row["listeners"] or 0
+        embedding = [float(x) for x in row["embedding"]]
+    else:
+        # cache miss — run the shared embedding pipeline. An unbounded cap means
+        # features works for any track regardless of popularity.
+        song = ingest.embed_and_store_track(row["artist"], row["name"], listener_cap=float("inf"))
+        if song is None:
+            raise HTTPException(502, "Could not fetch track data from Last.fm")
+        name, artist = song["name"], song["artist"]
+        listeners = song["listeners"] or 0
+        embedding = song["embedding"]
 
-        # cache miss: we haven't seen this song before and need to generate embeddings for it
-        else:
-            name = row["name"]
-            artist = row["artist"]
+    # derive the track's tags from its embedding: any vocab tag whose slot is
+    # non-zero. Same derivation for hot and cold paths, so they agree.
+    with get_cursor() as cursor:
+        cursor.execute("SELECT id, tag FROM tag_vocab WHERE id < %s", (EMBEDDING_DIM,))
+        tags = [
+            r["tag"] for r in cursor.fetchall()
+            if r["id"] < len(embedding) and embedding[r["id"]] > 0
+        ]
 
-            # get listener count + basic track-level tags
-            lastfm_track = lastfm.get_track_info(artist, name)
-
-            # get artist tags (background context, downweighted) and track-specific tags (dominant)
-            artist_tags = lastfm.get_artist_top_tags(artist)
-            track_tags = lastfm.get_track_top_tags(artist, name)
-            similar_artists = lastfm.get_similar_artists(artist)
-            similar_tags = [(lastfm.get_artist_top_tags(a["artist"]), a["match"]) for a in similar_artists]
-            tag_counts = lastfm.blend_tags(artist_tags, track_tags, similar_tags)
-
-            # builds embedding for the track
-            emb_service.get_or_create_tag_ids(list(tag_counts.keys()))
-            vector = emb_service.build_tag_vector(tag_counts)
-
-            # updates entry in songs table
-            with get_cursor() as cursor:
-                cursor.execute("""
-                    UPDATE songs SET listeners = %s, embedding = %s WHERE track_id = %s
-                """, (lastfm_track["listeners"], vector, track_id))
-
-            return TrackFeatures(
-                track_id=track_id,
-                name=name,
-                artist=artist,
-                listeners=lastfm_track["listeners"],
-                tags=list(tag_counts.keys()),
-                embedding=vector
-            )
+    return TrackFeatures(
+        track_id=track_id,
+        name=name,
+        artist=artist,
+        listeners=listeners,
+        tags=tags,
+        embedding=embedding
+    )

@@ -61,21 +61,13 @@ def add_seed(request: SeedRequest):
         # already cached — skip all API calls
         vector = [float(x) for x in row["embedding"]]
     else:
-        # first time seeing this song — fetch everything and store it
-        lastfm_track = lastfm.get_track_info(artist, name)
-
-        artist_tags = lastfm.get_artist_top_tags(artist)
-        track_tags = lastfm.get_track_top_tags(artist, name)
-        similar_artists = lastfm.get_similar_artists(artist)
-        similar_tags = [(lastfm.get_artist_top_tags(a["artist"]), a["match"]) for a in similar_artists]
-        tag_counts = lastfm.blend_tags(artist_tags, track_tags, similar_tags)
-        embeddings.get_or_create_tag_ids(list(tag_counts.keys()))
-        vector = embeddings.build_tag_vector(tag_counts)
-
-        with get_cursor() as cursor:
-            cursor.execute("""
-                UPDATE songs SET listeners = %s, embedding = %s WHERE track_id = %s
-            """, (lastfm_track["listeners"], vector, request.track_id))
+        # first time seeing this song — run the shared embedding pipeline. An
+        # unbounded cap means the seed itself is never dropped for being too
+        # popular (the underground cap only applies to its candidates).
+        song = ingest.embed_and_store_track(artist, name, listener_cap=float("inf"))
+        if song is None:
+            raise HTTPException(502, "Could not fetch track data from Last.fm")
+        vector = song["embedding"]
 
     with get_cursor() as cursor:
         cursor.execute("""
@@ -84,18 +76,12 @@ def add_seed(request: SeedRequest):
             ON CONFLICT (track_id) DO UPDATE SET is_seed = true
         """, (request.track_id,))
 
-    with get_cursor() as cursor:
-        cursor.execute("""
-            SELECT track_id, name, artist, listeners, image,
-                   1 - (embedding <=> %s::vector) AS similarity
-            FROM songs
-            WHERE embedding IS NOT NULL
-            AND listeners < %s
-            AND track_id != %s
-            ORDER BY embedding <=> %s::vector
-            LIMIT %s
-        """, (vector, MAX_LISTENERS, request.track_id, vector, DEFAULT_K))
-        candidates = [dict(r) for r in cursor.fetchall()]
+    candidates = embeddings.ann_search(
+        vector,
+        listeners_cap=MAX_LISTENERS,
+        exclude_ids=[request.track_id],
+        limit=DEFAULT_K,
+    )
 
     similar = lastfm.get_similar_tracks(artist, name, limit=SEED_SIMILAR_LIMIT)
     seen_ids = {c["track_id"] for c in candidates} | {request.track_id}

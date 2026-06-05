@@ -1,8 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from app.models import LinearPlaylistRequest, TreePlaylistRequest, PlaylistResponse, PlaylistTrack
 from app.db import get_cursor
-from app.services import lastfm, embeddings as emb_service
-from app.services.covers import get_cover_url
+from app.services import ingest, embeddings as emb_service
 from app.config import MAX_LISTENERS
 
 router = APIRouter(prefix="/playlists", tags=["playlists"])
@@ -15,28 +14,16 @@ def embed_missing(track_ids: set):
         return
     with get_cursor() as cursor:
         cursor.execute(
-            "SELECT track_id, name, artist FROM songs WHERE track_id = ANY(%s) AND embedding IS NULL",
+            "SELECT artist, name FROM songs WHERE track_id = ANY(%s) AND embedding IS NULL",
             (list(track_ids),)
         )
         unembedded = cursor.fetchall()
 
+    # Neighborhood tracks are already in the graph, so an unbounded cap keeps the
+    # shared pipeline from skipping any of them for being too popular.
     for row in unembedded:
         try:
-            artist, name = row["artist"], row["name"]
-            lastfm_track = lastfm.get_track_info(artist, name)
-            artist_tags = lastfm.get_artist_top_tags(artist)
-            track_tags = lastfm.get_track_top_tags(artist, name)
-            similar_artists = lastfm.get_similar_artists(artist)
-            similar_tags = [(lastfm.get_artist_top_tags(a["artist"]), a["match"]) for a in similar_artists]
-            tag_counts = lastfm.blend_tags(artist_tags, track_tags, similar_tags)
-            emb_service.get_or_create_tag_ids(list(tag_counts.keys()))
-            vector = emb_service.build_tag_vector(tag_counts)
-            image = get_cover_url(artist, name)
-            with get_cursor() as cursor:
-                cursor.execute(
-                    "UPDATE songs SET listeners = %s, embedding = %s, image = COALESCE(%s, image) WHERE track_id = %s",
-                    (lastfm_track["listeners"], vector, image, row["track_id"])
-                )
+            ingest.embed_and_store_track(row["artist"], row["name"], listener_cap=float("inf"))
         except Exception:
             pass
 
@@ -49,36 +36,12 @@ def get_neighborhood(cursor, track_id: str) -> set:
     return {row["target_id"] for row in cursor.fetchall()}
 
 
-def fetch_neighbors(cursor, embedding, exclude_ids, listeners_cap, k, allowed_ids=None):
-    if allowed_ids:
-        cursor.execute("""
-            SELECT track_id, name, artist, listeners, image, embedding,
-                   1 - (embedding <=> %s::vector) AS similarity
-            FROM songs
-            WHERE embedding IS NOT NULL
-            AND listeners < %s
-            AND track_id != ALL(%s)
-            AND track_id = ANY(%s)
-            ORDER BY embedding <=> %s::vector
-            LIMIT %s
-        """, (embedding, listeners_cap, list(exclude_ids), list(allowed_ids), embedding, k))
-    else:
-        cursor.execute("""
-            SELECT track_id, name, artist, listeners, image, embedding,
-                   1 - (embedding <=> %s::vector) AS similarity
-            FROM songs
-            WHERE embedding IS NOT NULL
-            AND listeners < %s
-            AND track_id != ALL(%s)
-            ORDER BY embedding <=> %s::vector
-            LIMIT %s
-        """, (embedding, listeners_cap, list(exclude_ids), embedding, k))
-    return [dict(r) for r in cursor.fetchall()]
-
-
 def find_neighbors(cursor, embedding, exclude_ids, k, niche, allowed_ids=None):
     if not niche:
-        return fetch_neighbors(cursor, embedding, exclude_ids, MAX_LISTENERS, k, allowed_ids)
+        return emb_service.ann_search(
+            embedding, listeners_cap=MAX_LISTENERS, exclude_ids=exclude_ids,
+            allowed_ids=allowed_ids, limit=k, cursor=cursor,
+        )
 
     collected = []
     excluded = set(exclude_ids)
@@ -86,7 +49,10 @@ def find_neighbors(cursor, embedding, exclude_ids, k, niche, allowed_ids=None):
     for threshold in NICHE_THRESHOLDS:
         if len(collected) >= k:
             break
-        results = fetch_neighbors(cursor, embedding, excluded, threshold, k - len(collected), allowed_ids)
+        results = emb_service.ann_search(
+            embedding, listeners_cap=threshold, exclude_ids=excluded,
+            allowed_ids=allowed_ids, limit=k - len(collected), cursor=cursor,
+        )
         for r in results:
             collected.append(r)
             excluded.add(r["track_id"])

@@ -9,6 +9,20 @@ Visual reference for how the Underground Music Discovery backend actually works
 > - **Album covers** come from Deezer → iTunes → Deezer artist photo (`services/covers.py`).
 > - Extra machinery exists beyond the plan: **blended tags**, **MMR re-ranking**, **reject steering**, **linear & tree playlists**, and **recursive seed expansion**.
 
+## Two shared building blocks
+
+Most of the flows below are built from the same two helpers, so several diagrams
+reference them instead of redrawing the steps:
+
+- **`ingest.embed_and_store_track(artist, name, listener_cap)`** — the *one*
+  tag→vector embedding pipeline (diagram 3). Cache-aware: returns the stored row
+  if already embedded, otherwise runs the Last.fm calls + `blend_tags` + vector
+  build and upserts. Used by seeding, `/songs/.../features`, recommendation
+  top-up, and playlist backfill.
+- **`embeddings.ann_search(embedding, *, listeners_cap, exclude_ids, allowed_ids, limit, cursor)`**
+  — the *one* pgvector nearest-neighbor query. Used by seeding, recommendations,
+  feedback (accept rerun), and both playlist strategies.
+
 ---
 
 ## 1. System overview
@@ -110,11 +124,12 @@ erDiagram
 
 ---
 
-## 3. Embedding pipeline (tags → vector)
+## 3. Embedding pipeline (tags → vector) — `ingest.embed_and_store_track`
 
-How any `(artist, track)` becomes a stored `vector(300)`. Shared by seeding,
-recommendation top-up, and playlist embedding (`services/ingest.py`,
-`services/embeddings.py`, `lastfm.blend_tags`).
+How any `(artist, track)` becomes a stored `vector(300)`. This *is*
+`ingest.embed_and_store_track` — the single shared block every other flow calls
+when it needs an embedding (`services/ingest.py`, `services/embeddings.py`,
+`lastfm.blend_tags`). A cache hit short-circuits before any Last.fm call.
 
 ```mermaid
 flowchart TD
@@ -176,12 +191,12 @@ flowchart TD
     exist -->|yes| cached{"embedding cached?"}
 
     cached -->|yes| reuse["reuse stored vector<br/>(no API calls)"]
-    cached -->|no| build["full embedding pipeline<br/>(see diagram 3) + UPDATE songs"]
+    cached -->|no| build["embed_and_store_track<br/>(diagram 3, cap = ∞)"]
 
     reuse --> node
     build --> node["UPSERT graph_nodes<br/>is_seed = true"]
 
-    node --> ann["ANN search in pgvector<br/>embedding <=> seed<br/>WHERE listeners < 500k<br/>LIMIT k"]
+    node --> ann["ann_search<br/>listeners < 500k, limit k"]
     ann --> simseed["lastfm.get_similar_tracks(seed)<br/>limit 25"]
 
     simseed --> escalate["process_similar_tracks:<br/>embed+store each, score vs seed<br/>escalate listener caps<br/>500k → 1M → 2M → 10M<br/>until ≥1 added"]
@@ -204,10 +219,13 @@ honor the requested `k`.
 flowchart TD
     req(["GET /recommendations/{id}?k&lambda&exclude"]) --> emb["load seed embedding"]
     emb --> none{"has embedding?"}
-    none -->|no| empty["return [] (TODO: embed on demand)"]
-    none -->|yes| steer["steering.apply_steering<br/>base − α·Σ(rejected)<br/>then normalize"]
+    none -->|no| cold["cold seed →<br/>embed_and_store_track (diagram 3)"]
+    none -->|yes| steer
+    cold --> zero{"all-zero vector?"}
+    zero -->|yes| empty["return [] (no usable tags)"]
+    zero -->|no| steer["steering.apply_steering<br/>base − α·Σ(rejected)<br/>then normalize"]
 
-    steer --> pool["ANN search<br/>fetch k × 3 candidates<br/>listeners < 500k, exclude set"]
+    steer --> pool["ann_search<br/>fetch k × 3 candidates<br/>listeners < 500k, exclude set"]
     pool --> cap["per-artist cap (max 2)<br/>→ capped_pool + overflow"]
     cap --> mmr["mmr_rerank<br/>λ·relevance − (1−λ)·redundancy<br/>(λ = 0.7)"]
 
@@ -245,7 +263,7 @@ flowchart TD
 
     branch -->|accept| promote["UPSERT graph_nodes<br/>is_seed = true"]
     promote --> reparent["copy parent edge → accepted node<br/>(keeps it linked in graph)"]
-    reparent --> rerun["ANN from accepted node<br/>(with its own steering)<br/>INSERT new graph_edges"]
+    reparent --> rerun["ann_search from accepted node<br/>(with its own steering)<br/>INSERT new graph_edges"]
     rerun --> adone(["success"])
 ```
 
@@ -260,15 +278,15 @@ thresholds (100 → 1k → 10k → 100k → 500k) to favor the most underground 
 flowchart TD
     subgraph linear["/playlists/linear"]
         L1["load seed embedding"] --> L2["get_neighborhood (direct edges)"]
-        L2 --> L3["embed_missing (fill any null embeddings)"]
-        L3 --> L4["find_neighbors within neighborhood<br/>niche → escalate thresholds<br/>sort by listeners asc"]
+        L2 --> L3["embed_missing<br/>(embed_and_store_track per null, diagram 3)"]
+        L3 --> L4["find_neighbors → ann_search<br/>niche → escalate thresholds<br/>sort by listeners asc"]
         L4 --> L5(["flat track list"])
     end
 
     subgraph tree["/playlists/tree (BFS)"]
         T1["queue = [(seed, emb, depth 0)]"] --> T2{"queue &<br/>len < n?"}
         T2 -->|pop| T3["expand allowed set<br/>with this node's edges"]
-        T3 --> T4["find_neighbors → take 2"]
+        T3 --> T4["find_neighbors (ann_search) → take 2"]
         T4 --> T5["append to playlist,<br/>enqueue neighbors (depth+1)"]
         T5 --> T2
         T2 -->|done| T6(["branching track list"])

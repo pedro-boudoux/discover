@@ -115,6 +115,23 @@ def blend_tags(
     return {tag: count for tag, count in blended.items() if count > 0}
 
 
+def get_artist_top_tracks(artist: str, limit: int = 10) -> list:
+    """
+    Most-played tracks for an artist. Used as a cold-start fallback when a seed
+    has no track.getSimilar results: we mine the seed's similar artists' top
+    tracks so even an obscure/instrumental song still grows a graph.
+    """
+    data = _request("artist.getTopTracks", artist=artist, limit=limit)
+    tracks = data.get("toptracks", {}).get("track", [])
+
+    results = []
+    for t in tracks:
+        a = t.get("artist")
+        name = a["name"] if isinstance(a, dict) and a.get("name") else artist
+        results.append({"name": t["name"], "artist": name})
+    return results
+
+
 def get_similar_tracks(artist: str, track: str, limit: int = 10) -> list:
     data = _request("track.getSimilar", artist=artist, track=track, limit=limit)
     similar = data.get("similartracks", {}).get("track", [])

@@ -147,6 +147,11 @@ A fresh DB is sparse, so `POST /graph/seed` doesn't rely on ANN alone:
 - Then **recursively expand**: take the top 3 candidates, pull *their* `getSimilar`
   (limit 10) and embed those too — this thickens the local neighborhood so BFS
   playlists don't drift into unrelated music once direct edges run out.
+- **Cold-start fallback**: if the pool is *still* empty (instrumental / soundtrack /
+  very obscure seeds often have no `track.getSimilar` at all), mine the seed's
+  **similar artists' top tracks** (`artist.getSimilar` → `artist.getTopTracks`) and
+  embed those instead. Without this such a seed yields an empty graph — nothing to
+  embed means `/recommendations` returns nothing and the UI shows a lone node.
 - Merge ANN + getSimilar + expansion, keep the top `DEFAULT_K` (10) by similarity, write edges.
 
 ### Playlists

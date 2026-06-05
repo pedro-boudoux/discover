@@ -8,6 +8,7 @@ SIMILAR_TRACK_LISTENER_CAPS = [MAX_LISTENERS, 1_000_000, 2_000_000, 10_000_000]
 SEED_SIMILAR_LIMIT = 25
 EXPANSION_DEPTH = 3
 EXPANSION_LIMIT = 10
+ARTIST_TOPTRACKS_LIMIT = 10   # similar-artist top tracks pulled in the cold-start fallback
 
 router = APIRouter(prefix="/graph", tags=["graph"])
 
@@ -134,6 +135,17 @@ def add_seed(request: SeedRequest):
                     break
         except Exception:
             continue
+
+    # cold-start fallback: instrumental / soundtrack / very obscure seeds often
+    # have NO track.getSimilar at all, which leaves the pool empty and the graph a
+    # dead single node. Mine the seed's similar artists' top tracks instead so
+    # there's still something to embed, recommend, and branch into.
+    if not candidates:
+        for sa in lastfm.get_similar_artists(artist):
+            sa_tracks = lastfm.get_artist_top_tracks(sa["artist"], limit=ARTIST_TOPTRACKS_LIMIT)
+            for cap in SIMILAR_TRACK_LISTENER_CAPS:
+                if process_similar_tracks(sa_tracks, cap) > 0:
+                    break
 
     # merge ANN + getSimilar + expansion results, keep top DEFAULT_K by similarity
     candidates = sorted(candidates, key=lambda c: c["similarity"], reverse=True)[:DEFAULT_K]

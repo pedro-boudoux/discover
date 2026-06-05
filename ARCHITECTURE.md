@@ -203,7 +203,10 @@ flowchart TD
 
     escalate --> expand["Recursive expansion<br/>top 3 candidates → getSimilar(10)<br/>embed+store those too"]
 
-    expand --> rank["merge ANN + getSimilar + expansion<br/>sort by similarity, keep top k"]
+    expand --> coldcheck{"pool still empty?<br/>(no track.getSimilar)"}
+    coldcheck -->|yes| fallback["Cold-start fallback:<br/>artist.getSimilar → artist.getTopTracks<br/>embed+store those"]
+    coldcheck -->|no| rank
+    fallback --> rank["merge ANN + getSimilar + expansion<br/>sort by similarity, keep top k"]
     rank --> edges[("INSERT graph_edges<br/>seed → each candidate")]
     edges --> done(["{track_id, name, artist}"])
 ```

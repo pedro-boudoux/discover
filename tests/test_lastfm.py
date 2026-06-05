@@ -1,11 +1,42 @@
 """
-Tier-1 unit tests for app/services/lastfm.py — pure dict math only.
-blend_tags has no I/O; no mocking required.
+Tier-1 unit tests for app/services/lastfm.py.
+blend_tags has no I/O; get_artist_top_tracks parses a mocked _request payload.
 """
 
 import pytest
 
-from app.services.lastfm import blend_tags
+from app.services import lastfm
+from app.services.lastfm import blend_tags, get_artist_top_tracks
+
+
+class TestGetArtistTopTracks:
+    def test_parses_tracks_and_nested_artist(self, monkeypatch):
+        payload = {"toptracks": {"track": [
+            {"name": "Song A", "artist": {"name": "Real Artist"}},
+            {"name": "Song B", "artist": {"name": "Other Artist"}},
+        ]}}
+        monkeypatch.setattr(lastfm, "_request", lambda method, **kw: payload)
+        out = get_artist_top_tracks("Seed Artist")
+        assert out == [
+            {"name": "Song A", "artist": "Real Artist"},
+            {"name": "Song B", "artist": "Other Artist"},
+        ]
+
+    def test_falls_back_to_queried_artist_when_artist_missing(self, monkeypatch):
+        payload = {"toptracks": {"track": [
+            {"name": "Song A"},                       # no artist key
+            {"name": "Song B", "artist": {}},          # artist dict without name
+        ]}}
+        monkeypatch.setattr(lastfm, "_request", lambda method, **kw: payload)
+        out = get_artist_top_tracks("Seed Artist")
+        assert out == [
+            {"name": "Song A", "artist": "Seed Artist"},
+            {"name": "Song B", "artist": "Seed Artist"},
+        ]
+
+    def test_empty_payload_returns_empty_list(self, monkeypatch):
+        monkeypatch.setattr(lastfm, "_request", lambda method, **kw: {})
+        assert get_artist_top_tracks("Nobody") == []
 
 
 class TestBlendTags:

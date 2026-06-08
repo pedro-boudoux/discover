@@ -23,7 +23,7 @@ def embed_missing(track_ids: set):
     # shared pipeline from skipping any of them for being too popular.
     for row in unembedded:
         try:
-            ingest.embed_and_store_track(row["artist"], row["name"], listener_cap=float("inf"))
+            ingest.embed_and_store_track(row["artist"], row["name"])
         except Exception:
             pass
 
@@ -39,7 +39,7 @@ def get_neighborhood(cursor, track_id: str) -> set:
 def find_neighbors(cursor, embedding, exclude_ids, k, niche, allowed_ids=None):
     if not niche:
         return emb_service.ann_search(
-            embedding, listeners_cap=MAX_LISTENERS, exclude_ids=exclude_ids,
+            embedding, exclude_ids=exclude_ids,
             allowed_ids=allowed_ids, limit=k, cursor=cursor,
         )
 

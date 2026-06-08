@@ -3,12 +3,12 @@ from app.services import lastfm, embeddings
 from app.services.covers import get_cover_url
 
 
-def embed_and_store_track(artist: str, name: str, listener_cap: float) -> dict | None:
+def embed_and_store_track(artist: str, name: str) -> dict | None:
     """
     Ensure a track is embedded and stored in the songs table, fetching tags from
     Last.fm when we haven't seen it before. Returns the full song row
     (track_id, name, artist, listeners, image, embedding) or None if the track
-    exceeds the listener cap or can't be fetched.
+    can't be fetched.
 
     This is the shared building block behind seed bootstrapping and the
     recommendation top-up: both need to turn a (artist, name) pair into a stored
@@ -24,8 +24,6 @@ def embed_and_store_track(artist: str, name: str, listener_cap: float) -> dict |
         row = cursor.fetchone()
 
     if row and row["embedding"] is not None:
-        if row["listeners"] is not None and row["listeners"] >= listener_cap:
-            return None
         return {
             "track_id": track_id,
             "name": row["name"],
@@ -36,8 +34,6 @@ def embed_and_store_track(artist: str, name: str, listener_cap: float) -> dict |
         }
 
     info = lastfm.get_track_info(artist, name)
-    if info["listeners"] >= listener_cap:
-        return None
 
     artist_tags = lastfm.get_artist_top_tags(artist)
     track_tags = lastfm.get_track_top_tags(artist, name)

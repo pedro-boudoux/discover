@@ -3,7 +3,7 @@ from app.models import RecommendationsResponse, Recommendation
 from app.db import get_cursor
 from app.services import steering, lastfm, ingest, embeddings
 from app.services.embeddings import mmr_rerank
-from app.config import MAX_LISTENERS, DEFAULT_K, MMR_LAMBDA, MMR_POOL_MULTIPLIER, MMR_MAX_PER_ARTIST
+from app.config import DEFAULT_K, MMR_LAMBDA, MMR_POOL_MULTIPLIER, MMR_MAX_PER_ARTIST
 
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
@@ -46,7 +46,7 @@ def topup_from_lastfm(seed_track_id: str, query_embedding: list, exclude_ids: se
                 cand_id = embeddings.make_track_id(cand["artist"], cand["name"])
                 if cand_id in excluded:
                     continue
-                song = ingest.embed_and_store_track(cand["artist"], cand["name"], MAX_LISTENERS)
+                song = ingest.embed_and_store_track(cand["artist"], cand["name"])
                 if song is None:
                     continue
                 added.append({
@@ -97,7 +97,7 @@ def get_recommendations(
         # Cold seed: embed it on demand instead of bailing. Pass an effectively
         # unbounded listener cap so the seed itself is never filtered out for
         # being too popular — the underground cap only applies to candidates.
-        song = ingest.embed_and_store_track(row["artist"], row["name"], listener_cap=float("inf"))
+        song = ingest.embed_and_store_track(row["artist"], row["name"])
         base_embedding = song["embedding"] if song else None
     else:
         base_embedding = list(row["embedding"])
@@ -113,7 +113,6 @@ def get_recommendations(
 
     pool = embeddings.ann_search(
         steered_embedding,
-        listeners_cap=MAX_LISTENERS,
         exclude_ids=exclude_ids,
         limit=k * MMR_POOL_MULTIPLIER,
     )

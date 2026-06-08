@@ -219,9 +219,7 @@ def reembed_songs(limit: int = Query(default=50, ge=1, le=500)):
 
     def _reembed(song):
         try:
-            result = ingest.embed_and_store_track(
-                song["artist"], song["name"], listener_cap=float("inf")
-            )
+            result = ingest.embed_and_store_track(song["artist"], song["name"])
             return result is not None
         except Exception:
             return False
@@ -314,7 +312,7 @@ def get_song_features(track_id: str):
     else:
         # cache miss — run the shared embedding pipeline. An unbounded cap means
         # features works for any track regardless of popularity.
-        song = ingest.embed_and_store_track(row["artist"], row["name"], listener_cap=float("inf"))
+        song = ingest.embed_and_store_track(row["artist"], row["name"])
         if song is None:
             raise HTTPException(502, "Could not fetch track data from Last.fm")
         name, artist = song["name"], song["artist"]

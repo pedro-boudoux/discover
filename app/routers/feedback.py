@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from app.models import FeedbackRequest, FeedbackResponse
 from app.db import get_cursor
 from app.services import steering, embeddings
-from app.config import MAX_LISTENERS, DEFAULT_K
+from app.config import DEFAULT_K
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
@@ -55,7 +55,6 @@ def submit_feedback(request: FeedbackRequest):
 
                 neighbors = embeddings.ann_search(
                     steered,
-                    listeners_cap=MAX_LISTENERS,
                     exclude_ids=[request.track_id],
                     limit=DEFAULT_K,
                     cursor=cursor,

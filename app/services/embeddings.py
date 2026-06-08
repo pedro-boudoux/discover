@@ -1,7 +1,7 @@
 import hashlib
 import numpy as np
 from app.db import get_cursor
-from app.config import EMBEDDING_DIM, MAX_LISTENERS, DEFAULT_K
+from app.config import EMBEDDING_DIM, DEFAULT_K
 
 
 def make_track_id(artist: str, track: str) -> str:
@@ -66,7 +66,7 @@ def build_tag_vector(tag_counts: dict[str, int]) -> list[float]:
 def ann_search(
     embedding: list,
     *,
-    listeners_cap: int = MAX_LISTENERS,
+    listeners_cap: float = float("inf"),
     exclude_ids=(),
     allowed_ids=None,
     limit: int = DEFAULT_K,
@@ -76,25 +76,31 @@ def ann_search(
     Approximate-nearest-neighbor search over the songs table — the single source
     of truth for vector lookups used by seeding, recommendations and playlists.
 
-    Returns songs ordered by cosine distance to `embedding`, filtered to those
-    under `listeners_cap`, never including `exclude_ids`, and (if `allowed_ids` is
-    a non-empty set) restricted to that set. Pass an open `cursor` to reuse a
-    transaction; otherwise one is opened for the query.
+    Returns songs ordered by cosine distance to `embedding`, excluding zero-
+    similarity results (no shared tags), never including `exclude_ids`, and (if
+    `allowed_ids` is a non-empty set) restricted to that set. Pass an optional
+    `listeners_cap` to filter by listener count (used by niche playlist mode).
+    Pass an open `cursor` to reuse a transaction; otherwise one is opened.
     """
     use_allowed = bool(allowed_ids)
+    use_cap = listeners_cap < float("inf")
+    cap_clause = "AND listeners < %s" if use_cap else ""
     allowed_clause = "AND track_id = ANY(%s)" if use_allowed else ""
     sql = f"""
         SELECT track_id, name, artist, listeners, image, embedding,
                1 - (embedding <=> %s::vector) AS similarity
         FROM songs
         WHERE embedding IS NOT NULL
-          AND listeners < %s
+          {cap_clause}
           AND track_id != ALL(%s)
           {allowed_clause}
         ORDER BY embedding <=> %s::vector
         LIMIT %s
     """
-    params = [embedding, listeners_cap, list(exclude_ids)]
+    params = [embedding]
+    if use_cap:
+        params.append(listeners_cap)
+    params.append(list(exclude_ids))
     if use_allowed:
         params.append(list(allowed_ids))
     params += [embedding, limit]
@@ -112,6 +118,7 @@ def ann_search(
                 "similarity": round(r["similarity"], 3),
             }
             for r in cur.fetchall()
+            if r["similarity"] > 0
         ]
 
     if cursor is not None:

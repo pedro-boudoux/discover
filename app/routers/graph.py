@@ -5,9 +5,8 @@ from app.models import (
 )
 from app.db import get_cursor
 from app.services import lastfm, embeddings, ingest
-from app.config import MAX_LISTENERS, DEFAULT_K
+from app.config import DEFAULT_K
 
-SIMILAR_TRACK_LISTENER_CAPS = [MAX_LISTENERS, 1_000_000, 2_000_000, 10_000_000]
 SEED_SIMILAR_LIMIT = 25
 EXPANSION_DEPTH = 3
 EXPANSION_LIMIT = 10
@@ -102,7 +101,7 @@ def add_seed(request: SeedRequest):
         # first time seeing this song — run the shared embedding pipeline. An
         # unbounded cap means the seed itself is never dropped for being too
         # popular (the underground cap only applies to its candidates).
-        song = ingest.embed_and_store_track(artist, name, listener_cap=float("inf"))
+        song = ingest.embed_and_store_track(artist, name)
         if song is None:
             raise HTTPException(502, "Could not fetch track data from Last.fm")
         vector = song["embedding"]
@@ -116,7 +115,6 @@ def add_seed(request: SeedRequest):
 
     candidates = embeddings.ann_search(
         vector,
-        listeners_cap=MAX_LISTENERS,
         exclude_ids=[request.track_id],
         limit=DEFAULT_K,
     )
@@ -124,7 +122,7 @@ def add_seed(request: SeedRequest):
     similar = lastfm.get_similar_tracks(artist, name, limit=SEED_SIMILAR_LIMIT)
     seen_ids = {c["track_id"] for c in candidates} | {request.track_id}
 
-    def process_similar_tracks(similar_list, listener_cap):
+    def process_similar_tracks(similar_list):
         added = 0
         for sim in similar_list:
             try:
@@ -132,7 +130,7 @@ def add_seed(request: SeedRequest):
                 if sim_id in seen_ids:
                     continue
 
-                song = ingest.embed_and_store_track(sim["artist"], sim["name"], listener_cap)
+                song = ingest.embed_and_store_track(sim["artist"], sim["name"])
                 if song is None:
                     continue
 
@@ -144,11 +142,7 @@ def add_seed(request: SeedRequest):
                 continue
         return added
 
-    # try escalating listener caps until we get at least one genre-relevant candidate
-    for cap in SIMILAR_TRACK_LISTENER_CAPS:
-        added = process_similar_tracks(similar, cap)
-        if added > 0:
-            break
+    process_similar_tracks(similar)
 
     # recursive expansion: pull getSimilar from top candidates so the genre-correct pool
     # is thick enough that BFS playlists don't drift into unrelated music when they
@@ -166,10 +160,7 @@ def add_seed(request: SeedRequest):
                 continue
 
             cand_similar = lastfm.get_similar_tracks(cand_row["artist"], cand_row["name"], limit=EXPANSION_LIMIT)
-            for cap in SIMILAR_TRACK_LISTENER_CAPS:
-                added = process_similar_tracks(cand_similar, cap)
-                if added > 0:
-                    break
+            process_similar_tracks(cand_similar)
         except Exception:
             continue
 
@@ -180,9 +171,7 @@ def add_seed(request: SeedRequest):
     if not candidates:
         for sa in lastfm.get_similar_artists(artist):
             sa_tracks = lastfm.get_artist_top_tracks(sa["artist"], limit=ARTIST_TOPTRACKS_LIMIT)
-            for cap in SIMILAR_TRACK_LISTENER_CAPS:
-                if process_similar_tracks(sa_tracks, cap) > 0:
-                    break
+            process_similar_tracks(sa_tracks)
 
     # merge ANN + getSimilar + expansion results, keep top DEFAULT_K by similarity
     candidates = sorted(candidates, key=lambda c: c["similarity"], reverse=True)[:DEFAULT_K]

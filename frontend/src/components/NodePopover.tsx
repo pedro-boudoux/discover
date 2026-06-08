@@ -2,6 +2,18 @@ import { useState } from "react";
 import type { ExpansionMethod, ExpansionParams } from "../types";
 import { DEFAULT_EXPANSION } from "../types";
 
+const METHOD_LABELS: Record<ExpansionMethod, string> = {
+  recommendations: "MMR",
+  linear: "Linear",
+  tree: "Tree",
+};
+
+const METHOD_DESCRIPTIONS: Record<ExpansionMethod, string> = {
+  recommendations: "MMR — balances similarity to the seed with diversity between picks, so you get varied but relevant music.",
+  linear: "Linear — flat ranked list of the seed's nearest neighbors, sorted by similarity.",
+  tree: "Tree — BFS through the graph from the seed, branching outward to explore further connections.",
+};
+
 type Props = {
   nodeLabel: string;
   isSeed: boolean;
@@ -50,7 +62,7 @@ export function NodePopover({
         </div>
 
         <Label>Method</Label>
-        <div className="grid grid-cols-3 gap-1 mb-3">
+        <div className="grid grid-cols-3 gap-1 mb-2">
           {(["recommendations", "linear", "tree"] as ExpansionMethod[]).map((m) => (
             <button
               key={m}
@@ -62,16 +74,19 @@ export function NodePopover({
                   : "border-[#d0d0d0] text-[#8a8a8a] hover:text-[#3a3a3a] hover:border-[#a0a0a0]",
               ].join(" ")}
             >
-              {m === "recommendations" ? "MMR" : m === "linear" ? "Linear" : "Tree"}
+              {METHOD_LABELS[m]}
             </button>
           ))}
         </div>
+        <p className="text-[10px] text-[#8a8a8a] leading-snug mb-3">
+          {METHOD_DESCRIPTIONS[params.method]}
+        </p>
 
         <SliderRow
           label="Number of songs"
           value={params.k}
           min={1}
-          max={20}
+          max={10}
           step={1}
           suffix={String(params.k)}
           onChange={(v) => update("k", v)}
@@ -146,7 +161,7 @@ export function NodePopover({
               else setConfirmingDelete(true);
             }}
             className={[
-              "w-full rounded-md py-2 text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed",
+              "w-full rounded-xl py-2 text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed",
               confirmingDelete
                 ? "bg-red-500 text-white hover:bg-red-600"
                 : "border border-[#d0d0d0] text-red-500 hover:bg-red-50/60 hover:border-red-300",

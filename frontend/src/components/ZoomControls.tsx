@@ -4,7 +4,7 @@ export function ZoomControls() {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
 
   return (
-    <div className="relative overflow-hidden rounded-[25px] w-[40px] h-[120px] flex flex-col items-center justify-center gap-[15px] p-[10px] shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)]">
+    <div className="relative overflow-hidden rounded-[25px] w-[40px] h-[120px] flex flex-col items-center justify-center gap-[15px] p-[10px] shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)] transition-all duration-200 hover:scale-[1.025] hover:shadow-[0px_6px_20px_rgba(0,0,0,0.18)]">
       <div
         aria-hidden
         className="absolute inset-0 backdrop-blur-[2.5px] bg-white/75 rounded-[25px] pointer-events-none"

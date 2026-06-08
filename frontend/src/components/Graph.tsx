@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
 import ReactFlow, {
   type DefaultEdgeOptions,
   type Edge,
@@ -8,6 +8,7 @@ import ReactFlow, {
   type NodeTypes,
   type OnEdgesChange,
   type OnNodesChange,
+  type ReactFlowInstance,
   Panel,
 } from "reactflow";
 import "reactflow/dist/style.css";
@@ -18,6 +19,8 @@ const defaultEdgeOptions: DefaultEdgeOptions = {
   type: "simplebezier",
   style: { stroke: "rgba(255,255,255,0.5)", strokeWidth: 1.5, opacity: 0.8 },
 };
+
+export type GraphHandle = { fitView: () => void };
 
 type Props = {
   nodes: Node<SongNodeData>[];
@@ -31,7 +34,7 @@ type Props = {
   onNodeDragStop?: NodeDragHandler;
 };
 
-export function Graph({
+export const Graph = forwardRef<GraphHandle, Props>(function Graph({
   nodes,
   edges,
   onNodesChange,
@@ -41,8 +44,13 @@ export function Graph({
   onNodeDragStart,
   onNodeDrag,
   onNodeDragStop,
-}: Props) {
+}, ref) {
   const nodeTypes = useMemo<NodeTypes>(() => ({ song: SongNode }), []);
+  const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    fitView: () => rfInstanceRef.current?.fitView({ padding: 0.3, duration: 600 }),
+  }));
 
   return (
     <ReactFlow
@@ -63,10 +71,11 @@ export function Graph({
       proOptions={{ hideAttribution: true }}
       minZoom={0.2}
       maxZoom={1.6}
+      onInit={(inst) => { rfInstanceRef.current = inst; }}
     >
-      <Panel position="bottom-left" className="!m-0 !ml-[26px] !mb-8">
+      <Panel position="bottom-left" className="!m-0 !ml-5 !mb-8">
         <ZoomControls />
       </Panel>
     </ReactFlow>
   );
-}
+});

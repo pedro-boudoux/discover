@@ -68,7 +68,7 @@ export function SongNode({ data, selected }: NodeProps<SongNodeData>) {
         <div className="truncate text-sm font-semibold leading-tight">{data.name}</div>
         <div className={`truncate text-[11px] mt-0.5 ${subTextColorClass}`}>{data.artist}</div>
         {data.isSeed ? (
-          <div className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.18em] font-medium text-white/80">
+          <div className={`mt-1.5 font-mono text-[9px] uppercase tracking-[0.18em] font-medium ${isLight ? "text-neutral-600" : "text-white/80"}`}>
             Source Song
           </div>
         ) : (

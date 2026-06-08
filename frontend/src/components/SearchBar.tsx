@@ -8,9 +8,10 @@ type Props = {
   placeholder?: string;
   autoFocus?: boolean;
   dropUp?: boolean;
+  disabled?: boolean;
 };
 
-export function SearchBar({ onPick, placeholder, autoFocus, dropUp = false }: Props) {
+export function SearchBar({ onPick, placeholder, autoFocus, dropUp = false, disabled = false }: Props) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SongSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -67,10 +68,11 @@ export function SearchBar({ onPick, placeholder, autoFocus, dropUp = false }: Pr
         <input
           autoFocus={autoFocus}
           value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onFocus={() => results.length > 0 && setOpen(true)}
-          placeholder={placeholder ?? "Search for a song…"}
-          className="relative w-full bg-transparent h-[48px] px-5 pr-12 text-[14px] text-[#3a3a3a] placeholder:text-[#8a8a8a] focus:outline-none"
+          onChange={(e) => !disabled && setQ(e.target.value)}
+          onFocus={() => !disabled && results.length > 0 && setOpen(true)}
+          placeholder={disabled ? "Building your graph…" : (placeholder ?? "Search for a song…")}
+          disabled={disabled}
+          className="relative w-full bg-transparent h-[48px] px-5 pr-12 text-[14px] text-[#3a3a3a] placeholder:text-[#8a8a8a] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
         />
         {loading && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">

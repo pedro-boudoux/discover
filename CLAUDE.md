@@ -290,6 +290,22 @@ POST /songs/backfill-covers?limit={n}
 ```
 Maintenance: re-resolve covers for songs with NULL or placeholder images.
 
+```
+POST /songs/repack-vocab
+```
+Maintenance: re-packs `tag_vocab.id` to be dense (1..N) via a two-step
+`dense_rank()` UPDATE, resets the SERIAL sequence, and NULLs all `songs.embedding`
+values (which are stale under the old id→slot mapping). Idempotent — no-op when
+ids are already dense. Run once on any DB that was built with the old
+`INSERT … ON CONFLICT DO UPDATE` code that burned sequence ids on conflicts.
+
+```
+POST /songs/reembed?limit={n}
+```
+Maintenance: re-embeds up to `n` songs with `embedding IS NULL`, re-fetching
+tags from Last.fm and rebuilding vectors against the current packed vocab. Call
+repeatedly until `remaining` is 0. Always run `/repack-vocab` first.
+
 ### Graph
 
 ```

@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { ShapeGrid } from "./components/ShapeGrid";
 import {
   addEdge,
   useEdgesState,
@@ -281,16 +282,18 @@ export default function App() {
   const hasGraph = nodes.length > 0;
 
   return (
-    <div className="h-full w-full relative overflow-hidden">
-      {/* Ocean background */}
-      <img
-        src="/ocean-bg.jpg"
-        alt=""
-        className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none"
-        draggable={false}
-      />
-
-      {hasGraph ? (
+    <div className="h-full w-full relative overflow-hidden bg-[#42a7f5]">
+      <div className="absolute inset-0">
+        <ShapeGrid
+          direction="diagonal"
+          speed={0.5}
+          borderColor="rgba(255,255,255,0.08)"
+          hoverFillColor="rgba(255,255,255,0.00)"
+          squareSize={44}
+          hoverTrailAmount={0}
+        />
+      </div>
+{hasGraph ? (
         <GraphView
           nodes={nodes}
           edges={edges}

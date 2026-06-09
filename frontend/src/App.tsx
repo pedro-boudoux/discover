@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { exchangeCodeForToken } from "./services/spotify";
 import { ShapeGrid } from "./components/ShapeGrid";
 import {
   addEdge,
@@ -40,6 +41,14 @@ function arcAround(count: number, parentPos: Vec): Vec[] {
 
 type PopoverState = { nodeId: string; label: string; isSeed: boolean; x: number; y: number };
 
+// Detect whether we're running inside the Spotify OAuth popup
+const spotifyCallbackCode = new URLSearchParams(window.location.search).get("code");
+const isSpotifyPopup = !!(spotifyCallbackCode && window.opener);
+
+// Module-level guard: an auth code is single-use, but React StrictMode
+// double-invokes effects in dev. This ensures we exchange the code exactly once.
+let spotifyExchangeStarted = false;
+
 export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<SongNodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -49,6 +58,33 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const graphRef = useRef<GraphHandle>(null);
+
+  // Handle Spotify OAuth callback — runs in the popup window
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("code");
+    if (!code) return;
+    if (spotifyExchangeStarted) return; // guard StrictMode double-invoke
+    spotifyExchangeStarted = true;
+
+    if (window.opener) {
+      exchangeCodeForToken(code)
+        .then(() => {
+          (window.opener as Window).postMessage({ type: "spotify_auth_done" }, "*");
+        })
+        .catch((err: Error) => {
+          (window.opener as Window).postMessage(
+            { type: "spotify_auth_error", error: err.message },
+            "*",
+          );
+        })
+        .finally(() => window.close());
+    } else {
+      // Fallback: full-page redirect (popup was blocked) — exchange and clean the URL
+      exchangeCodeForToken(code)
+        .catch(() => {})
+        .finally(() => window.history.replaceState({}, "", window.location.pathname));
+    }
+  }, []);
 
   const { simNodesRef, syncSimulation, removeNodesFromSim, handleNodeDragStart, handleNodeDrag, handleNodeDragStop } =
     useGraphSim(setNodes);
@@ -281,13 +317,21 @@ export default function App() {
 
   const hasGraph = nodes.length > 0;
 
+  if (isSpotifyPopup) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-[#FAFAFA] text-sm text-black/50 font-medium">
+        Connecting to Spotify…
+      </div>
+    );
+  }
+
   return (
-    <div className="h-full w-full relative overflow-hidden bg-[#42a7f5]">
+    <div className="h-full w-full relative overflow-hidden bg-[#FAFAFA]">
       <div className="absolute inset-0">
         <ShapeGrid
           direction="diagonal"
           speed={0.5}
-          borderColor="rgba(255,255,255,0.08)"
+          borderColor="rgba(0,0,0,0.03)"
           hoverFillColor="rgba(255,255,255,0.00)"
           squareSize={44}
           hoverTrailAmount={0}

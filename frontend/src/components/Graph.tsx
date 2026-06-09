@@ -17,7 +17,7 @@ import { ZoomControls } from "./ZoomControls";
 
 const defaultEdgeOptions: DefaultEdgeOptions = {
   type: "simplebezier",
-  style: { stroke: "rgba(255,255,255,0.5)", strokeWidth: 1.5, opacity: 0.8 },
+  style: { stroke: "rgb(64 64 64 / 0.5)", strokeWidth: 1.5, opacity: 0.8 },
 };
 
 export type GraphHandle = { fitView: () => void };

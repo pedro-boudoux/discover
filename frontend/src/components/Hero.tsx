@@ -13,14 +13,14 @@ export function Hero({ onPick, disabled }: Props) {
       style={{ left: 60, top: "38%" }}
     >
       <span
-        className="font-display font-medium text-[128px] text-white leading-none select-none"
-        style={{ textShadow: "0px 2px 8px rgba(0,0,0,0.18)" }}
+        className="font-display font-medium text-[128px] text-black leading-none select-none"
+        //style={{ textShadow: "0px 2px 8px rgba(0,0,0,0.18)" }}
       >
         pyo
       </span>
       <p
-        className="text-white text-[17px] leading-normal mt-3 font-light"
-        style={{ textShadow: "0px 1px 4px rgba(0,0,0,0.3)" }}
+        className="text-black text-[17px] leading-normal mt-3 font-light"
+     //  style={{ textShadow: "0px 1px 4px rgba(0,0,0,0.3)" }}
       >
         stands for &ldquo;putting you on&rdquo; good music.
       </p>

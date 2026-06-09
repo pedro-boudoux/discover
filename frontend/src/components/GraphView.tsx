@@ -9,13 +9,6 @@ import type { SongSearchResult } from "../types";
 
 type SeedingPhase = null | "checking" | "warm" | "cold";
 
-// Spotify blocks playlist creation for Development-mode apps (403 Forbidden).
-// The integration code is complete and correct — it just needs Extended Quota
-// approval. Flip VITE_SPOTIFY_EXPORT_ENABLED=true to re-enable the button once
-// that's granted. See GitHub issue #5.
-const SPOTIFY_EXPORT_ENABLED =
-  import.meta.env.VITE_SPOTIFY_EXPORT_ENABLED === "true";
-
 export type GraphViewProps = {
   nodes: Node<SongNodeData>[];
   edges: Edge[];
@@ -110,14 +103,12 @@ export function GraphView({
         />
       </div>
 
-      {/* Spotify export — bottom-right (gated until Extended Quota is approved) */}
-      {SPOTIFY_EXPORT_ENABLED && (
-        <div className="absolute bottom-8 right-5 z-10">
-          <SpotifyExportButton
-            songs={nodes.map((n) => ({ name: n.data.name, artist: n.data.artist }))}
-          />
-        </div>
-      )}
+      {/* Spotify export — bottom-right */}
+      <div className="absolute bottom-8 right-5 z-10">
+        <SpotifyExportButton
+          songs={nodes.map((n) => ({ name: n.data.name, artist: n.data.artist }))}
+        />
+      </div>
     </>
   );
 }

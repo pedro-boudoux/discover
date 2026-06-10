@@ -10,7 +10,7 @@ import {
   type NodeMouseHandler,
 } from "reactflow";
 import { GraphView } from "./components/GraphView";
-import { Hero } from "./components/Hero";
+import { Landing } from "./components/Landing";
 import { NodePopover } from "./components/NodePopover";
 import { SeedingStatus } from "./components/SeedingStatus";
 import { type SongNodeData } from "./components/SongNode";
@@ -331,35 +331,37 @@ export default function App() {
 
   return (
     <div className="h-full w-full relative overflow-hidden bg-[#FAFAFA]">
-      <div className="absolute inset-0">
-        <ShapeGrid
-          direction="diagonal"
-          speed={0.5}
-          borderColor="rgba(0,0,0,0.03)"
-          hoverFillColor="rgba(255,255,255,0.00)"
-          squareSize={44}
-          hoverTrailAmount={0}
-        />
-      </div>
-{hasGraph ? (
-        <GraphView
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onNodeClick={handleNodeClick}
-          onPaneClick={() => setPopover(null)}
-          onNodeDragStart={handleNodeDragStart}
-          onNodeDrag={handleNodeDrag}
-          onNodeDragStop={handleNodeDragStop}
-          onSeed={handleSeed}
-          seedingPhase={seedingPhase}
-          trackIds={nodes.map((n) => n.id)}
-          edgeCount={edges.length}
-          graphRef={graphRef}
-        />
+      {hasGraph ? (
+        <>
+          <div className="absolute inset-0">
+            <ShapeGrid
+              direction="diagonal"
+              speed={0.5}
+              borderColor="rgba(0,0,0,0.03)"
+              hoverFillColor="rgba(255,255,255,0.00)"
+              squareSize={44}
+              hoverTrailAmount={0}
+            />
+          </div>
+          <GraphView
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={handleNodeClick}
+            onPaneClick={() => setPopover(null)}
+            onNodeDragStart={handleNodeDragStart}
+            onNodeDrag={handleNodeDrag}
+            onNodeDragStop={handleNodeDragStop}
+            onSeed={handleSeed}
+            seedingPhase={seedingPhase}
+            trackIds={nodes.map((n) => n.id)}
+            edgeCount={edges.length}
+            graphRef={graphRef}
+          />
+        </>
       ) : (
-        <Hero onPick={handleSeed} disabled={!!seedingPhase} />
+        <Landing onPick={handleSeed} disabled={!!seedingPhase} />
       )}
 
       {/* Full-screen frosted overlay while seeding from the hero page */}

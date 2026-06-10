@@ -110,6 +110,13 @@ html, body, #root {
 .popover-in  { animation: popover-in 220ms var(--ease-out) both; }
 .popover-out { animation: popover-out 150ms var(--ease-in-out) both; }
 
+/* Landing scroll cue — gentle bobbing down arrow */
+@keyframes scroll-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(7px); }
+}
+.scroll-bob { animation: scroll-bob 1.8s var(--ease-in-out) infinite; }
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible {
@@ -125,4 +132,5 @@ input:focus-visible {
   }
   .fade-up { animation: none; }
   .popover-in, .popover-out { animation: none; }
+  .scroll-bob { animation: none; }
 }

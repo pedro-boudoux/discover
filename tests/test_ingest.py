@@ -2,6 +2,10 @@
 Tier-2 tests for app/services/ingest.py::embed_and_store_track.
 
 All DB and network seams are monkeypatched — no Postgres or Last.fm required.
+
+Note: the listener cap was removed in 21dc30b ("Remove underground listener
+cap") — all tracks are now eligible regardless of listener count, so these
+tests assert that popular tracks are returned/embedded rather than filtered.
 """
 
 import pytest
@@ -49,8 +53,7 @@ def _make_two_step_cursor(first_rows, second_rows=None):
 
 
 # ---------------------------------------------------------------------------
-# Cache-hit: embedding present AND listeners under cap → return stored row,
-# zero Last.fm calls.
+# Cache-hit: embedding present → return stored row, zero Last.fm calls.
 # ---------------------------------------------------------------------------
 
 class TestEmbedAndStoreTrackCacheHit:
@@ -93,7 +96,7 @@ class TestEmbedAndStoreTrackCacheHit:
         self._patch_all_lastfm(monkeypatch)
 
         from app.services.ingest import embed_and_store_track
-        result = embed_and_store_track(artist, name, listener_cap=500_000)
+        result = embed_and_store_track(artist, name)
 
         assert result is not None
         assert result["track_id"] == tid
@@ -120,36 +123,15 @@ class TestEmbedAndStoreTrackCacheHit:
         self._patch_all_lastfm(monkeypatch)
 
         from app.services.ingest import embed_and_store_track
-        result = embed_and_store_track(artist, name, listener_cap=500_000)
+        result = embed_and_store_track(artist, name)
 
         assert all(isinstance(v, float) for v in result["embedding"])
 
-    def test_cache_hit_listeners_at_cap_returns_none(self, monkeypatch):
+    def test_cache_hit_high_listeners_still_returns_row(self, monkeypatch):
         """
-        The cap is exclusive on the stored path: listeners >= cap → None.
-        Even though an embedding exists, the track is too popular.
+        No listener cap anymore: a very popular cached track is returned, not
+        filtered. (Previously listeners >= 500k returned None.)
         """
-        artist, name = "Coldplay", "Yellow"
-        tid = make_track_id(artist, name)
-        stored_vec = make_vector(0.5)
-
-        cached_row = {
-            "track_id": tid, "name": name, "artist": artist,
-            "listeners": 500_000,  # exactly at cap → filtered out
-            "image": None, "embedding": stored_vec,
-        }
-        monkeypatch.setattr(
-            "app.services.ingest.get_cursor",
-            make_fake_get_cursor([cached_row]),
-        )
-        self._patch_all_lastfm(monkeypatch)
-
-        from app.services.ingest import embed_and_store_track
-        result = embed_and_store_track(artist, name, listener_cap=500_000)
-
-        assert result is None
-
-    def test_cache_hit_listeners_above_cap_returns_none(self, monkeypatch):
         artist, name = "Ed Sheeran", "Shape of You"
         tid = make_track_id(artist, name)
         stored_vec = make_vector(0.5)
@@ -166,16 +148,14 @@ class TestEmbedAndStoreTrackCacheHit:
         self._patch_all_lastfm(monkeypatch)
 
         from app.services.ingest import embed_and_store_track
-        result = embed_and_store_track(artist, name, listener_cap=500_000)
+        result = embed_and_store_track(artist, name)
 
-        assert result is None
+        assert result is not None
+        assert result["track_id"] == tid
+        assert result["listeners"] == 9_999_999
 
-    def test_cache_hit_null_listeners_treated_as_under_cap(self, monkeypatch):
-        """
-        listeners=None should NOT be filtered: the condition is
-        `row["listeners"] is not None and row["listeners"] >= cap`,
-        so None listeners pass through.
-        """
+    def test_cache_hit_null_listeners_returns_row(self, monkeypatch):
+        """listeners=None is returned as-is (no filtering)."""
         artist, name = "Actress", "Hubble"
         tid = make_track_id(artist, name)
         stored_vec = make_vector(0.4)
@@ -192,14 +172,14 @@ class TestEmbedAndStoreTrackCacheHit:
         self._patch_all_lastfm(monkeypatch)
 
         from app.services.ingest import embed_and_store_track
-        result = embed_and_store_track(artist, name, listener_cap=500_000)
+        result = embed_and_store_track(artist, name)
 
         assert result is not None
         assert result["listeners"] is None
 
 
 # ---------------------------------------------------------------------------
-# Cache miss: SELECT → None, Last.fm listeners under cap → run full pipeline
+# Cache miss: SELECT → None, run the full pipeline regardless of listener count.
 # ---------------------------------------------------------------------------
 
 class TestEmbedAndStoreTrackCacheMiss:
@@ -259,7 +239,7 @@ class TestEmbedAndStoreTrackCacheMiss:
         artist, name, tid, fake_vec = self._setup_new_track(monkeypatch)
 
         from app.services.ingest import embed_and_store_track
-        result = embed_and_store_track(artist, name, listener_cap=500_000)
+        result = embed_and_store_track(artist, name)
 
         assert result is not None
         assert result["track_id"] == tid
@@ -275,7 +255,7 @@ class TestEmbedAndStoreTrackCacheMiss:
 
         import app.services.ingest as ingest_mod
         from app.services.ingest import embed_and_store_track
-        embed_and_store_track(artist, name, listener_cap=500_000)
+        embed_and_store_track(artist, name)
 
         ingest_mod.lastfm.get_track_info.assert_called_once_with(artist, name)
         ingest_mod.lastfm.get_artist_top_tags.assert_called()
@@ -286,69 +266,21 @@ class TestEmbedAndStoreTrackCacheMiss:
         ingest_mod.embeddings.build_tag_vector.assert_called_once()
         ingest_mod.get_cover_url.assert_called_once_with(artist, name)
 
-    def test_cache_miss_listeners_over_cap_returns_none(self, monkeypatch):
+    def test_cache_miss_high_listeners_still_runs_pipeline(self, monkeypatch):
         """
-        Last.fm reports listeners >= cap → function returns None and
-        does NOT proceed to embedding or INSERT.
+        No listener cap anymore: even a mainstream track (millions of listeners)
+        runs the full pipeline and is embedded/stored. (Previously listeners >=
+        500k short-circuited to None.)
         """
-        artist, name = "Daft Punk", "Get Lucky"
-        tid = make_track_id(artist, name)
-
-        # SELECT → no row
-        monkeypatch.setattr(
-            "app.services.ingest.get_cursor",
-            make_fake_get_cursor([]),
-        )
-        monkeypatch.setattr(
-            "app.services.ingest.lastfm.get_track_info",
-            MagicMock(return_value={"listeners": 5_000_000, "playcount": 0, "tags": []}),
-        )
-
-        # These must NOT be called
-        no_call = MagicMock(side_effect=AssertionError("must not be called"))
-        for attr in (
-            "app.services.ingest.lastfm.get_artist_top_tags",
-            "app.services.ingest.lastfm.get_track_top_tags",
-            "app.services.ingest.lastfm.get_similar_artists",
-            "app.services.ingest.lastfm.blend_tags",
-            "app.services.ingest.embeddings.get_or_create_tag_ids",
-            "app.services.ingest.embeddings.build_tag_vector",
-            "app.services.ingest.get_cover_url",
-        ):
-            monkeypatch.setattr(attr, MagicMock(side_effect=AssertionError(f"{attr} must not be called")))
+        artist, name, tid, fake_vec = self._setup_new_track(monkeypatch, listeners=5_000_000)
 
         from app.services.ingest import embed_and_store_track
-        result = embed_and_store_track(artist, name, listener_cap=500_000)
+        result = embed_and_store_track(artist, name)
 
-        assert result is None
-
-    def test_cache_miss_listeners_exactly_at_cap_returns_none(self, monkeypatch):
-        """Boundary: Last.fm listeners == cap → None (cap is exclusive)."""
-        artist, name = "Some Band", "Some Song"
-
-        monkeypatch.setattr(
-            "app.services.ingest.get_cursor",
-            make_fake_get_cursor([]),
-        )
-        monkeypatch.setattr(
-            "app.services.ingest.lastfm.get_track_info",
-            MagicMock(return_value={"listeners": 500_000, "playcount": 0, "tags": []}),
-        )
-        for attr in (
-            "app.services.ingest.lastfm.get_artist_top_tags",
-            "app.services.ingest.lastfm.get_track_top_tags",
-            "app.services.ingest.lastfm.get_similar_artists",
-            "app.services.ingest.lastfm.blend_tags",
-            "app.services.ingest.embeddings.get_or_create_tag_ids",
-            "app.services.ingest.embeddings.build_tag_vector",
-            "app.services.ingest.get_cover_url",
-        ):
-            monkeypatch.setattr(attr, MagicMock(side_effect=AssertionError(f"{attr} must not be called")))
-
-        from app.services.ingest import embed_and_store_track
-        result = embed_and_store_track(artist, name, listener_cap=500_000)
-
-        assert result is None
+        assert result is not None
+        assert result["track_id"] == tid
+        assert result["listeners"] == 5_000_000
+        assert result["embedding"] == fake_vec
 
     def test_cache_miss_row_exists_but_embedding_none_reruns_pipeline(self, monkeypatch):
         """
@@ -402,7 +334,7 @@ class TestEmbedAndStoreTrackCacheMiss:
         )
 
         from app.services.ingest import embed_and_store_track
-        result = embed_and_store_track(artist, name, listener_cap=500_000)
+        result = embed_and_store_track(artist, name)
 
         assert result is not None
         assert result["track_id"] == tid

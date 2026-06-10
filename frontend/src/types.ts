@@ -37,7 +37,7 @@ export type ExpansionParams = {
 
 export const DEFAULT_EXPANSION: ExpansionParams = {
   method: "recommendations",
-  k: 10,
+  k: 5,
   lambda: 0.7,
   niche: false,
   maxDepth: 3,

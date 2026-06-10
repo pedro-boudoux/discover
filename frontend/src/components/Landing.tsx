@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { Hero } from "./Hero";
 import { ShapeGrid } from "./ShapeGrid";
 import type { SongSearchResult } from "../types";
+import about from "../../data/about.json";
 
 type Props = {
   onPick: (song: SongSearchResult) => void;
@@ -60,7 +61,7 @@ export function Landing({ onPick, disabled }: Props) {
         ref={aboutRef}
         className="relative h-full w-full bg-white flex items-center justify-center"
       >
-        {/* Project text goes here */}
+        <p>{about["about"].main}</p>
       </section>
     </div>
   );

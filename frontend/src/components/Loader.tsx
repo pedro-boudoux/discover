@@ -26,11 +26,3 @@ export function Spinner({ size = 16, className = "" }: SpinnerProps) {
   );
 }
 
-type LoadingTextProps = {
-  text: string;
-  className?: string;
-};
-
-export function LoadingText({ text, className = "" }: LoadingTextProps) {
-  return <span className={className}>{text}</span>;
-}

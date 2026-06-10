@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ExpansionMethod, ExpansionParams } from "../types";
 import { DEFAULT_EXPANSION } from "../types";
+
+// Keep in sync with the .popover-out duration in index.css
+const EXIT_MS = 150;
 
 const METHOD_LABELS: Record<ExpansionMethod, string> = {
   recommendations: "MMR",
@@ -9,9 +12,9 @@ const METHOD_LABELS: Record<ExpansionMethod, string> = {
 };
 
 const METHOD_DESCRIPTIONS: Record<ExpansionMethod, string> = {
-  recommendations: "MMR — balances similarity to the seed with diversity between picks, so you get varied but relevant music.",
-  linear: "Linear — flat ranked list of the seed's nearest neighbors, sorted by similarity.",
-  tree: "Tree — BFS through the graph from the seed, branching outward to explore further connections.",
+  recommendations: "Balances similarity to the seed with diversity between picks, so you get varied but relevant music.",
+  linear: "Flat ranked list of the seed's nearest neighbors, sorted by similarity.",
+  tree: "BFS through the graph from the seed, branching outward to explore further connections.",
 };
 
 type Props = {
@@ -35,13 +38,38 @@ export function NodePopover({
 }: Props) {
   const [params, setParams] = useState<ExpansionParams>(initial ?? DEFAULT_EXPANSION);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+
+  // Play the exit animation, then let the parent unmount us.
+  const close = useCallback(() => {
+    setLeaving((already) => {
+      if (already) return already;
+      setTimeout(onClose, EXIT_MS);
+      return true;
+    });
+  }, [onClose]);
+
+  // Dismiss on Escape.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") close();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [close]);
 
   function update<K extends keyof ExpansionParams>(key: K, value: ExpansionParams[K]) {
     setParams((p) => ({ ...p, [key]: value }));
   }
 
   return (
-    <div className="relative w-[300px] overflow-hidden rounded-[15px] shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)]">
+    <div
+      className={[
+        "relative w-[300px] overflow-hidden rounded-[15px] shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)]",
+        leaving ? "popover-out" : "popover-in",
+      ].join(" ")}
+      style={{ transformOrigin: "top left" }}
+    >
       <div aria-hidden className="absolute inset-0 backdrop-blur-[4px] bg-white/[0.88] rounded-[15px] pointer-events-none" />
       <div aria-hidden className="absolute inset-0 pointer-events-none rounded-[15px] shadow-[inset_0px_4px_4px_0px_rgba(255,255,255,0.25)]" />
       <div className="relative p-4 text-sm text-[#3a3a3a]">
@@ -53,7 +81,7 @@ export function NodePopover({
             <div className="truncate font-semibold text-[#1a1a1a]">{nodeLabel}</div>
           </div>
           <button
-            onClick={onClose}
+            onClick={close}
             className="text-[#8a8a8a] hover:text-[#3a3a3a] px-1 leading-none transition-colors"
             aria-label="Close"
           >
@@ -90,6 +118,21 @@ export function NodePopover({
           step={1}
           suffix={String(params.k)}
           onChange={(v) => update("k", v)}
+        />
+
+        <SliderRow
+          label="Min. similarity"
+          value={params.minSimilarity}
+          min={0}
+          max={0.95}
+          step={0.05}
+          suffix={`${Math.round(params.minSimilarity * 100)}%`}
+          onChange={(v) => update("minSimilarity", v)}
+          hint={
+            params.minSimilarity === 0
+              ? "off — keep every match"
+              : "drop matches below this"
+          }
         />
 
         {params.method === "recommendations" && (
@@ -157,8 +200,10 @@ export function NodePopover({
           <button
             disabled={loading}
             onClick={() => {
-              if (confirmingDelete) onDelete();
-              else setConfirmingDelete(true);
+              if (confirmingDelete) {
+                setLeaving(true);
+                setTimeout(onDelete, EXIT_MS);
+              } else setConfirmingDelete(true);
             }}
             className={[
               "w-full rounded-xl py-2 text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed",

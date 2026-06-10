@@ -32,6 +32,7 @@ export type ExpansionParams = {
   niche: boolean;
   maxDepth: number;
   allowDuplicates: boolean;
+  minSimilarity: number; // 0..1 — drop expansion results below this cosine similarity
 };
 
 export const DEFAULT_EXPANSION: ExpansionParams = {
@@ -41,4 +42,5 @@ export const DEFAULT_EXPANSION: ExpansionParams = {
   niche: false,
   maxDepth: 3,
   allowDuplicates: false,
+  minSimilarity: 0,
 };

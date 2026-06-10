@@ -97,6 +97,19 @@ html, body, #root {
   animation: fade-up var(--dur-med) var(--ease-out) both;
 }
 
+/* Node popover pop in/out */
+@keyframes popover-in {
+  from { opacity: 0; transform: scale(0.82); }
+  60%  { opacity: 1; transform: scale(1.02); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes popover-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.9); }
+}
+.popover-in  { animation: popover-in 220ms var(--ease-out) both; }
+.popover-out { animation: popover-out 150ms var(--ease-in-out) both; }
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible {
@@ -111,4 +124,5 @@ input:focus-visible {
     transition-duration: 0.001ms !important;
   }
   .fade-up { animation: none; }
+  .popover-in, .popover-out { animation: none; }
 }

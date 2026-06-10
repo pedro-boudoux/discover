@@ -207,10 +207,14 @@ export default function App() {
         const parentId = popover.nodeId;
         const knownIds = Array.from(simNodesRef.current.keys());
         const excludeIds = params.allowDuplicates ? [] : knownIds.filter((id) => id !== parentId);
-        const children = await expandFromTrack(parentId, params.method, {
+        const fetched = await expandFromTrack(parentId, params.method, {
           k: params.k, lambda: params.lambda, niche: params.niche,
           maxDepth: params.maxDepth, excludeIds,
         });
+        const children =
+          params.minSimilarity > 0
+            ? fetched.filter((c) => c.similarity >= params.minSimilarity)
+            : fetched;
 
         const parentSim = simNodesRef.current.get(parentId);
         const parentPos: Vec = { x: parentSim?.x ?? 0, y: parentSim?.y ?? 0 };

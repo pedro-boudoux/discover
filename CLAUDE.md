@@ -25,7 +25,7 @@ ceiling is `listeners < 500_000` (`MAX_LISTENERS`).
 | Album covers | Deezer + iTunes | Last.fm stopped serving real artist/album images |
 | Embeddings | numpy | Normalize + blend Last.fm tag vectors |
 | Vector DB | Postgres + pgvector | ANN search + graph state in one DB |
-| Hosting | Render | Managed Postgres with pgvector, easy FastAPI deploys |
+| Hosting | Railway (API) + Neon (Postgres) + GitHub Pages (frontend) | Railway runs the FastAPI service via the `Procfile`, Neon is managed Postgres with pgvector, the Vite build is published to GitHub Pages |
 
 ### Dependencies (`requirements.txt`)
 
@@ -384,8 +384,14 @@ discover/
 ├── ARCHITECTURE.md           # Mermaid diagrams of every flow
 ├── README.md
 ├── requirements.txt
-├── render.yaml
+├── requirements-dev.txt      # test/dev-only deps (pytest, etc.)
+├── pyproject.toml
+├── Procfile                  # Railway start command (uvicorn)
+├── .python-version           # pins Python 3.12 for the Railway build
+├── docker-compose.yml        # local Postgres + pgvector
+├── Makefile
 ├── .env.example
+├── tests/
 ├── migrations/
 │   └── init.sql              # canonical DDL (track_id schema)
 │
@@ -454,14 +460,20 @@ uvicorn app.main:app --reload
 
 ---
 
-## Deployment (Render)
+## Deployment (Railway + Neon + GitHub Pages)
 
-`render.yaml` provisions a web service + free Postgres. After the DB is up,
-enable pgvector once (`CREATE EXTENSION IF NOT EXISTS vector;`) — though
-`init_db()` also attempts this on startup. Set `LASTFM_API_KEY` in the dashboard;
-`DATABASE_URL` is wired automatically.
+The API runs on **Railway**, which starts the service from the `Procfile`
+(`web: uvicorn app.main:app --host 0.0.0.0 --port $PORT`) and pins Python 3.12 via
+`.python-version`. The database is **Neon** managed Postgres — enable pgvector once
+(`CREATE EXTENSION IF NOT EXISTS vector;`), though `init_db()` also attempts this on
+startup. Set `LASTFM_API_KEY` and `DATABASE_URL` (the Neon connection string) in the
+Railway service variables.
 
-> Free tier spins down after 15 min idle — first request after idle takes ~30s.
+The **frontend** is built with Vite and published to **GitHub Pages** (live at
+`pedro-boudoux.github.io`); point its API base URL at the Railway service.
+
+> Migrated off Render (the old `render.yaml` was removed). Free-tier instances may
+> cold-start after idle, so the first request can be slow.
 
 ---
 

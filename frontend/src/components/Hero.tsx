@@ -22,7 +22,7 @@ export function Hero({ onPick, disabled }: Props) {
         className="text-black text-[17px] leading-normal mt-3 font-light"
      //  style={{ textShadow: "0px 1px 4px rgba(0,0,0,0.3)" }}
       >
-        stands for &ldquo;putting you on&rdquo; good music.
+        stands for <span className="italic ">putting you on</span> good music.
       </p>
       <div className="mt-6 w-[430px] max-w-[calc(100vw-80px)]">
         <SearchBar

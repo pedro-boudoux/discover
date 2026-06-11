@@ -10,6 +10,8 @@ You give it a song, pyo will find songs just like that one based on its genre ta
   <img src="images/home.png" alt="pyo landing page — a single search box that says 'Tell us what you like, and we'll find similar.'" width="100%">
 </p>
 
+Try it out at: [pedro-boudoux.github.io/pyo](https://pedro-boudoux.github.io/pyo)
+
 ---
 
 ## How it actually works
@@ -94,4 +96,4 @@ npm run dev
 ---
 
 Built by [Pedro Boudoux](https://github.com/pedro-boudoux). The live frontend
-lives at [pedro-boudoux.github.io](https://pedro-boudoux.github.io).
+lives at [pedro-boudoux.github.io/pyo](https://pedro-boudoux.github.io/pyo).

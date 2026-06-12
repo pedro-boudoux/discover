@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS songs (
     listeners  INTEGER,
     image      TEXT,
     embedding  vector(300),
+    spotify_url        TEXT,         -- cached open.spotify.com link
+    spotify_checked_at TIMESTAMPTZ,  -- when we last resolved it (NULL = never)
     created_at TIMESTAMPTZ DEFAULT now()
 );
 

@@ -16,6 +16,7 @@ import { SeedingStatus } from "./components/SeedingStatus";
 import { type SongNodeData } from "./components/SongNode";
 import { type GraphHandle } from "./components/Graph";
 import { expandFromTrack, getSongStatus, seedSong } from "./api";
+import { prefetchSpotifyLink } from "./services/spotifyCache";
 import { useGraphSim } from "./hooks/useGraphSim";
 import type { ExpansionParams, SongSearchResult } from "./types";
 
@@ -58,6 +59,15 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const graphRef = useRef<GraphHandle>(null);
+
+  // Prefetch + cache each track's Spotify link as nodes appear on the graph, so
+  // opening a node's popover is instant. Keyed on the *set* of node ids (sorted)
+  // so this only fires when nodes are added/removed, not while dragging.
+  const nodeIdKey = nodes.map((n) => n.id).sort().join(",");
+  useEffect(() => {
+    if (!nodeIdKey) return;
+    for (const id of nodeIdKey.split(",")) prefetchSpotifyLink(id);
+  }, [nodeIdKey]);
 
   // Handle Spotify OAuth callback — runs in the popup window
   useEffect(() => {
@@ -385,6 +395,7 @@ export default function App() {
           <NodePopover
             key={popover.nodeId}
             nodeLabel={popover.label}
+            trackId={popover.nodeId}
             isSeed={popover.isSeed}
             loading={loading}
             onExpand={handleExpand}

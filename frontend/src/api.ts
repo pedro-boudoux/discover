@@ -34,6 +34,14 @@ export function getSongStatus(track_id: string) {
   );
 }
 
+export function getSpotifyLink(track_id: string) {
+  // checked=false means the backend couldn't reach Spotify (not a definitive
+  // "not on Spotify") — callers should not cache that result.
+  return request<{ url: string | null; checked: boolean }>(
+    `/songs/${track_id}/spotify`,
+  );
+}
+
 export function seedSong(track_id: string) {
   return request<{ track_id: string; name: string; artist: string }>(
     `/graph/seed`,

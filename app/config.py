@@ -6,6 +6,12 @@ load_dotenv()
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/music_db")
 
+# Spotify client-credentials — used only to resolve a public "listen on Spotify"
+# link for a track (no user OAuth, no audio features / recommendations). Optional:
+# if unset, the link endpoint simply reports no match.
+SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
+SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
+
 STEERING_ALPHA = 0.3
 MAX_LISTENERS = 500000
 DEFAULT_K = 10

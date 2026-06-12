@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Query, HTTPException
 from app.models import SongSearchResult, TrackFeatures
-from app.services import lastfm, ingest, embeddings as emb_service
+from app.services import lastfm, ingest, embeddings as emb_service, spotify
 from app.services.covers import get_cover_url, is_broken_image
 from app.db import get_cursor
 from app.config import EMBEDDING_DIM
@@ -287,6 +287,46 @@ def get_song_status(track_id: str):
         if not row:
             return {"exists": False, "cached": False}
         return {"exists": True, "cached": row["embedding"] is not None}
+
+
+"""
+    Resolve a public "listen on Spotify" link for a track via the Spotify
+    client-credentials search. Returns { url } where url is the open.spotify.com
+    track URL, or null if the song isn't on Spotify (or Spotify isn't configured).
+    The frontend only renders the link when url is non-null.
+"""
+@router.get("/{track_id}/spotify")
+def get_song_spotify_link(track_id: str):
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT name, artist, spotify_url, spotify_checked_at FROM songs WHERE track_id = %s",
+            (track_id,),
+        )
+        row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(404, "Track not found — search for it first")
+
+    # Cache hit: we've resolved this track before (found a link or confirmed it
+    # isn't on Spotify). Serve the stored answer without calling Spotify.
+    if row["spotify_checked_at"] is not None:
+        return {"url": row["spotify_url"], "checked": True}
+
+    # Cache miss: resolve once and persist. A SpotifyUnavailable (creds missing,
+    # network/HTTP error) is not a definitive answer, so we leave the row
+    # unchecked and report checked=false — clients shouldn't cache it, and it'll
+    # be retried next time.
+    try:
+        url = spotify.find_track_url(row["artist"], row["name"])
+    except spotify.SpotifyUnavailable:
+        return {"url": None, "checked": False}
+
+    with get_cursor() as cursor:
+        cursor.execute(
+            "UPDATE songs SET spotify_url = %s, spotify_checked_at = now() WHERE track_id = %s",
+            (url, track_id),
+        )
+    return {"url": url, "checked": True}
 
 
 """

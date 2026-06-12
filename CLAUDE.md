@@ -41,10 +41,14 @@ python-dotenv
 pydantic
 ```
 
-> **No Spotify.** `spotipy` and all `SPOTIFY_*` config/env vars have been
-> removed. Spotify is not called anywhere in the codebase. (The only remaining
-> trace is the `spotify_id → track_id` rename migrations in `db.py`, kept to
-> migrate older deployed databases.)
+> **Almost no Spotify.** `spotipy` is gone and Spotify plays no part in search,
+> embeddings, or recommendations. The one narrow exception is resolving a public
+> "listen on Spotify" link for a track: `app/services/spotify.py` uses the
+> **client-credentials** flow (`SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`) to
+> hit `track.search` and return the `open.spotify.com` URL, exposed via
+> `GET /songs/{track_id}/spotify`. It's optional — unset the creds and the
+> endpoint just returns `{ "url": null }`. (The `spotify_id → track_id` rename
+> migrations in `db.py` remain, to migrate older deployed databases.)
 
 ---
 
@@ -220,6 +224,8 @@ CREATE TABLE songs (
     listeners  INTEGER,
     image      TEXT,                   -- resolved album/artist cover URL
     embedding  vector(300),
+    spotify_url        TEXT,           -- cached open.spotify.com link (NULL = none)
+    spotify_checked_at TIMESTAMPTZ,    -- when we resolved it (NULL = never looked up)
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -277,6 +283,24 @@ GET /songs/{track_id}/status
 ```
 Lightweight check: `{ exists, cached }` — `cached` means an embedding is already
 stored. The frontend uses this to warn about "cold" seeds (multiple Last.fm calls, slow).
+
+```
+GET /songs/{track_id}/spotify
+```
+Resolves a public "listen on Spotify" link via the Spotify client-credentials
+search. Returns `{ url, checked }` — `url` is the `open.spotify.com` track URL or
+`null`; `checked` is `false` only when Spotify couldn't be reached (creds unset /
+network error), which is *not* a definitive "not on Spotify". 404 if the track
+isn't in `songs`.
+
+The answer is **persisted on `songs`** (`spotify_url` + `spotify_checked_at`):
+the first call resolves and stores it, later calls serve the stored value without
+hitting Spotify. A non-definitive result (`checked=false`) is not stored, so it's
+retried next time. The frontend mirrors this with a `localStorage` cache
+(`spotifyCache.ts`) and prefetches links as nodes appear on the graph, so opening
+a node popover is instant; it only caches `checked=true` answers. The popover
+renders the link when `url` is non-null, a muted "Not on Spotify" when it's a
+definitive `null`, and a brief loading state on the rare un-prefetched miss.
 
 ```
 GET /songs/{track_id}/features
@@ -437,6 +461,8 @@ MMR_MAX_PER_ARTIST  = 2        # per-artist cap in the candidate pool
 ```
 LASTFM_API_KEY=
 LASTFM_SHARED_SECRET=          # present in .env.example; not currently required
+SPOTIFY_CLIENT_ID=             # optional — only for the "listen on Spotify" link
+SPOTIFY_CLIENT_SECRET=         # optional — only for the "listen on Spotify" link
 DATABASE_URL=postgresql://user:password@localhost:5432/music_db
 ```
 

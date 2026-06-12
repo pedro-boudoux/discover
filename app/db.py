@@ -48,6 +48,8 @@ def init_db():
                 listeners  INTEGER,
                 image      TEXT,
                 embedding  vector({EMBEDDING_DIM}),
+                spotify_url        TEXT,
+                spotify_checked_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ DEFAULT now()
             )
         """)
@@ -92,6 +94,10 @@ def init_db():
     _try("ALTER TABLE graph_nodes RENAME COLUMN spotify_id TO track_id")
     _try("ALTER TABLE feedback RENAME COLUMN spotify_id TO track_id")
     _try("ALTER TABLE songs ADD COLUMN IF NOT EXISTS image TEXT")
+    # Cached Spotify "listen" link. spotify_checked_at distinguishes "never looked
+    # up" (NULL) from "looked up, not on Spotify" (set, with spotify_url NULL).
+    _try("ALTER TABLE songs ADD COLUMN IF NOT EXISTS spotify_url TEXT")
+    _try("ALTER TABLE songs ADD COLUMN IF NOT EXISTS spotify_checked_at TIMESTAMPTZ")
 
     # Ensure unique constraints and indexes exist regardless of how the table was created
     _try("CREATE UNIQUE INDEX IF NOT EXISTS songs_track_id_unique ON songs(track_id)")

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ExpansionMethod, ExpansionParams } from "../types";
 import { DEFAULT_EXPANSION } from "../types";
+import { getCachedSpotifyLink, prefetchSpotifyLink } from "../services/spotifyCache";
 
 // Keep in sync with the .popover-out duration in index.css
 const EXIT_MS = 150;
@@ -17,8 +18,15 @@ const METHOD_DESCRIPTIONS: Record<ExpansionMethod, string> = {
   tree: "BFS through the graph from the seed, branching outward to explore further connections.",
 };
 
+type SpotifyState =
+    
+  | { status: "loading" }
+  | { status: "found"; url: string }
+  | { status: "unavailable" };
+
 type Props = {
   nodeLabel: string;
+  trackId: string;
   isSeed: boolean;
   loading: boolean;
   onExpand: (params: ExpansionParams) => void;
@@ -29,6 +37,7 @@ type Props = {
 
 export function NodePopover({
   nodeLabel,
+  trackId,
   isSeed,
   loading,
   onExpand,
@@ -39,6 +48,30 @@ export function NodePopover({
   const [params, setParams] = useState<ExpansionParams>(initial ?? DEFAULT_EXPANSION);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  // Links are prefetched + cached when nodes appear on the graph, so this is
+  // usually a synchronous cache hit. The "loading" state only shows on the rare
+  // miss (e.g. a node that appeared before its prefetch finished).
+  const cached = getCachedSpotifyLink(trackId);
+  const [spotify, setSpotify] = useState<SpotifyState>(
+    cached === undefined
+      ? { status: "loading" }
+      : cached
+        ? { status: "found", url: cached }
+        : { status: "unavailable" },
+  );
+
+  useEffect(() => {
+    if (cached !== undefined) return; // already resolved from cache
+    let cancelled = false;
+    setSpotify({ status: "loading" });
+    prefetchSpotifyLink(trackId).then((url) => {
+      if (cancelled) return;
+      setSpotify(url ? { status: "found", url } : { status: "unavailable" });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [trackId, cached]);
 
   // Play the exit animation, then let the parent unmount us.
   const close = useCallback(() => {
@@ -79,6 +112,29 @@ export function NodePopover({
               Expand from
             </div>
             <div className="truncate font-semibold text-[#1a1a1a]">{nodeLabel}</div>
+            {spotify.status === "loading" && (
+              <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-[#8a8a8a]">
+                <SpotifyIcon className="w-3.5 h-3.5 animate-pulse" />
+                Finding on Spotify…
+              </span>
+            )}
+            {spotify.status === "found" && (
+              <a
+                href={spotify.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-[#1DB954] hover:text-[#1aa34a] transition-colors"
+              >
+                <SpotifyIcon className="w-3.5 h-3.5" />
+                Listen on Spotify
+              </a>
+            )}
+            {spotify.status === "unavailable" && (
+              <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-[#b0b0b0]">
+                <SpotifyIcon className="w-3.5 h-3.5" />
+                Not on Spotify
+              </span>
+            )}
           </div>
           <button
             onClick={close}
@@ -224,6 +280,14 @@ export function NodePopover({
         </div>
       </div>
     </div>
+  );
+}
+
+function SpotifyIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
+      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
+    </svg>
   );
 }
 

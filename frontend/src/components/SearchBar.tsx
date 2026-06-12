@@ -59,10 +59,21 @@ export function SearchBar({ onPick, placeholder, placeholderShort, autoFocus, dr
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
+  const showResults = open && results.length > 0;
+
   return (
     <div ref={wrapRef} className="relative w-full">
-      {/* Search input — glass pill with hover pop */}
-      <div className="relative overflow-hidden rounded-[25px] border border-white shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)] transition-all duration-200 hover:scale-[1.025] hover:shadow-[0px_6px_20px_rgba(0,0,0,0.18)] focus-within:scale-[1.025] focus-within:shadow-[0px_6px_20px_rgba(0,0,0,0.18)]">
+      {/* Search input — glass pill with hover pop. The pop (scale) is suppressed
+          while results are open so the bar stays exactly the dropdown's width:
+          both are w-full of this wrapper, and a scaled bar would read wider. */}
+      <div
+        className={[
+          "relative overflow-hidden rounded-[25px] border border-white shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)] transition-all duration-200",
+          showResults
+            ? ""
+            : "hover:scale-[1.025] hover:shadow-[0px_6px_20px_rgba(0,0,0,0.18)] focus-within:scale-[1.025] focus-within:shadow-[0px_6px_20px_rgba(0,0,0,0.18)]",
+        ].join(" ")}
+      >
         <div
           aria-hidden
           className="absolute inset-0 backdrop-blur-[2.5px] bg-white/75 rounded-[25px] pointer-events-none"
@@ -87,23 +98,25 @@ export function SearchBar({ onPick, placeholder, placeholderShort, autoFocus, dr
         )}
       </div>
 
-      {/* Results dropdown — glass panel, opens upward when dropUp=true */}
-      {open && results.length > 0 && (
+      {/* Results dropdown — same frosted-glass pane as the search bar (Figma
+          "Search Results" reuses the pyo Frosted Glass token), w-full so it is
+          always exactly the search bar's width. Opens upward when dropUp=true. */}
+      {showResults && (
         <div
           className={[
-            "absolute z-20 w-full overflow-hidden rounded-[15px] shadow-[0px_4px_20px_rgba(0,0,0,0.18)]",
+            "absolute z-20 w-full overflow-hidden rounded-[20px] border border-white shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)]",
             dropUp ? "bottom-[calc(100%+8px)]" : "top-[calc(100%+8px)]",
           ].join(" ")}
         >
           <div
             aria-hidden
-            className="absolute inset-0 backdrop-blur-[2.5px] bg-white/90 rounded-[15px] pointer-events-none"
+            className="absolute inset-0 backdrop-blur-[2.5px] bg-white/75 rounded-[20px] pointer-events-none"
           />
           <div
             aria-hidden
-            className="absolute inset-0 pointer-events-none rounded-[15px] shadow-[inset_0px_4px_4px_0px_rgba(255,255,255,0.25)]"
+            className="absolute inset-0 pointer-events-none rounded-[20px] shadow-[inset_0px_4px_4px_0px_rgba(255,255,255,0.25)]"
           />
-          <ul className="relative max-h-64 overflow-y-auto py-2">
+          <ul className="relative max-h-72 overflow-y-auto p-2">
             {results.map((r) => (
               <li
                 key={r.track_id}
@@ -113,20 +126,20 @@ export function SearchBar({ onPick, placeholder, placeholderShort, autoFocus, dr
                   setQ("");
                   setResults([]);
                 }}
-                className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-blue-100/60 transition-colors"
+                className="flex items-center gap-3 rounded-[14px] px-3 py-2.5 cursor-pointer transition-colors hover:bg-[#cfe6fb]/50"
               >
                 {r.image ? (
                   <img
                     src={r.image}
                     alt=""
-                    className="w-9 h-9 rounded-md object-cover flex-shrink-0"
+                    className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
                   />
                 ) : (
-                  <div className="w-9 h-9 rounded-md bg-white/40 flex-shrink-0" />
+                  <div className="w-10 h-10 rounded-lg bg-white/40 flex-shrink-0" />
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[14px] font-medium text-[#3a3a3a]">{r.name}</div>
-                  <div className="truncate text-[12px] text-[#8a8a8a]">{r.artist}</div>
+                  <div className="truncate text-[15px] font-medium text-[#3a3a3a]">{r.name}</div>
+                  <div className="truncate text-[13px] text-[#8a8a8a]">{r.artist}</div>
                 </div>
               </li>
             ))}

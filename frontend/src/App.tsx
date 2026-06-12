@@ -411,24 +411,18 @@ export default function App() {
             />
           </div>
         ) : (
-          <div
-            className="fixed z-30"
-            style={{
-              left: Math.min(popover.x, window.innerWidth - 320),
-              top: Math.min(popover.y, window.innerHeight - 400),
-            }}
-          >
-            <NodePopover
-              key={popover.nodeId}
-              nodeLabel={popover.label}
-              trackId={popover.nodeId}
-              isSeed={popover.isSeed}
-              loading={loading}
-              onExpand={handleExpand}
-              onDelete={() => handleDeleteNode(popover.nodeId)}
-              onClose={() => setPopover(null)}
-            />
-          </div>
+          <NodePopover
+            key={popover.nodeId}
+            nodeLabel={popover.label}
+            trackId={popover.nodeId}
+            isSeed={popover.isSeed}
+            loading={loading}
+            onExpand={handleExpand}
+            onDelete={() => handleDeleteNode(popover.nodeId)}
+            onClose={() => setPopover(null)}
+            x={popover.x}
+            y={popover.y}
+          />
         )
       )}
 

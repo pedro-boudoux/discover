@@ -39,6 +39,9 @@ type Props = {
   initial?: ExpansionParams;
   /** Render as a full-width bottom sheet (mobile) instead of a floating card. */
   mobile?: boolean;
+  /** Desktop only — initial top-left position of the floating card (px). */
+  x?: number;
+  y?: number;
 };
 
 export function NodePopover({
@@ -51,10 +54,47 @@ export function NodePopover({
   onClose,
   initial,
   mobile = false,
+  x = 0,
+  y = 0,
 }: Props) {
   const [params, setParams] = useState<ExpansionParams>(initial ?? DEFAULT_EXPANSION);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [leaving, setLeaving] = useState(false);
+
+  // ── Desktop: drag the card by its header to reposition it anywhere ──
+  // Position lives here (not in the parent) so dragging only re-renders the
+  // popover. Initial spot is clamped so the card opens fully on-screen.
+  const [pos, setPos] = useState(() => ({
+    x: Math.min(x, window.innerWidth - 320),
+    y: Math.min(y, window.innerHeight - 400),
+  }));
+  const dragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+
+  const onHeaderPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (mobile) return;
+      // Let the close button / Spotify link handle their own clicks.
+      if ((e.target as HTMLElement).closest("a, button, input")) return;
+      dragOffsetRef.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    },
+    [mobile, pos.x, pos.y],
+  );
+
+  const onHeaderPointerMove = useCallback((e: React.PointerEvent) => {
+    const off = dragOffsetRef.current;
+    if (!off) return;
+    // Clamp so the card stays on-screen (~300px wide) and the header is reachable.
+    const nx = Math.min(Math.max(8, e.clientX - off.x), window.innerWidth - 308);
+    const ny = Math.min(Math.max(8, e.clientY - off.y), window.innerHeight - 48);
+    setPos({ x: nx, y: ny });
+  }, []);
+
+  const onHeaderPointerUp = useCallback((e: React.PointerEvent) => {
+    if (!dragOffsetRef.current) return;
+    dragOffsetRef.current = null;
+    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+  }, []);
 
   // ── Mobile bottom-sheet motion (slide in + swipe-the-handle-down to dismiss) ──
   const [sheetTransform, setSheetTransform] = useState("translateY(100%)");
@@ -151,16 +191,7 @@ export function NodePopover({
     setParams((p) => ({ ...p, [key]: value }));
   }
 
-  return (
-    <>
-      {mobile && (
-        <div
-          aria-hidden
-          onClick={close}
-          className="fixed inset-0 bg-black/30"
-          style={{ opacity: backdropOn ? 1 : 0, transition: `opacity ${SHEET_MS}ms var(--ease-out)` }}
-        />
-      )}
+  const card = (
     <div
       className={[
         "relative shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)]",
@@ -195,7 +226,14 @@ export function NodePopover({
         </div>
       )}
       <div className={`relative p-4 text-sm text-[#3a3a3a] ${mobile ? "pb-[calc(1rem+env(safe-area-inset-bottom))]" : ""}`}>
-        <div className="flex items-start justify-between gap-2 mb-3">
+        <div
+          onPointerDown={onHeaderPointerDown}
+          onPointerMove={onHeaderPointerMove}
+          onPointerUp={onHeaderPointerUp}
+          className={`flex items-start justify-between gap-2 mb-3 ${
+            mobile ? "" : "cursor-grab select-none active:cursor-grabbing"
+          }`}
+        >
           <div className="min-w-0">
             <div className="text-[10px] uppercase tracking-widest text-[#8a8a8a] font-medium">
               Expand from
@@ -369,6 +407,25 @@ export function NodePopover({
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <>
+      {mobile && (
+        <div
+          aria-hidden
+          onClick={close}
+          className="fixed inset-0 bg-black/30"
+          style={{ opacity: backdropOn ? 1 : 0, transition: `opacity ${SHEET_MS}ms var(--ease-out)` }}
+        />
+      )}
+      {mobile ? (
+        card
+      ) : (
+        <div className="fixed z-30" style={{ left: pos.x, top: pos.y }}>
+          {card}
+        </div>
+      )}
     </>
   );
 }

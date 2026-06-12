@@ -2,7 +2,6 @@ import { useRef } from "react";
 import { Hero } from "./Hero";
 import { ShapeGrid } from "./ShapeGrid";
 import type { SongSearchResult } from "../types";
-import about from "../../data/about.json";
 
 type Props = {
   onPick: (song: SongSearchResult) => void;
@@ -141,7 +140,7 @@ export function Landing({ onPick, disabled }: Props) {
             <img
               className="h-auto w-full max-w-[360px]"
               src={`${import.meta.env.BASE_URL}images/tiffany-day.png`}
-              alt="Tiffany Day"
+              alt="Pyo graph example."
             />
           </div>
         </div>

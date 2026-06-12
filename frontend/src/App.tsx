@@ -18,6 +18,7 @@ import { type GraphHandle } from "./components/Graph";
 import { expandFromTrack, getSongStatus, seedSong } from "./api";
 import { prefetchSpotifyLink } from "./services/spotifyCache";
 import { useGraphSim } from "./hooks/useGraphSim";
+import { useIsMobile } from "./hooks/useIsMobile";
 import type { ExpansionParams, SongSearchResult } from "./types";
 
 type SeedingPhase = null | "checking" | "warm" | "cold";
@@ -59,6 +60,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const graphRef = useRef<GraphHandle>(null);
+  const isMobile = useIsMobile();
 
   // Prefetch + cache each track's Spotify link as nodes appear on the graph, so
   // opening a node's popover is instant. Keyed on the *set* of node ids (sorted)
@@ -194,8 +196,17 @@ export default function App() {
           }, STAGGER_MS * (i + 1));
         });
 
-        if (!isFirstSeed) {
-          setTimeout(() => graphRef.current?.fitView(), STAGGER_MS * (newChildNodes.length + 3));
+        // Fit the view once children have staggered in. Follow-up seeds always
+        // re-fit; the very first seed only re-fits on mobile, where the default
+        // zoom hugs the lone seed node and the surrounding arc spills offscreen.
+        if (!isFirstSeed || isMobile) {
+          const settleDelay = STAGGER_MS * (newChildNodes.length + 3);
+          setTimeout(() => graphRef.current?.fitView(), settleDelay);
+          // The force layout keeps spreading nodes for ~1s after they appear, so
+          // on first load fit again once it settles to guarantee all songs fit.
+          if (isFirstSeed) {
+            setTimeout(() => graphRef.current?.fitView(), settleDelay + 750);
+          }
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to seed song");
@@ -203,7 +214,7 @@ export default function App() {
         setSeedingPhase(null);
       }
     },
-    [setNodes, setEdges, syncSimulation, simNodesRef],
+    [setNodes, setEdges, syncSimulation, simNodesRef, isMobile],
   );
 
   // ── Expand from a node ───────────────────────────────────────────────────────
@@ -385,24 +396,40 @@ export default function App() {
       )}
 
       {popover && (
-        <div
-          className="fixed z-30"
-          style={{
-            left: Math.min(popover.x, window.innerWidth - 320),
-            top: Math.min(popover.y, window.innerHeight - 400),
-          }}
-        >
-          <NodePopover
-            key={popover.nodeId}
-            nodeLabel={popover.label}
-            trackId={popover.nodeId}
-            isSeed={popover.isSeed}
-            loading={loading}
-            onExpand={handleExpand}
-            onDelete={() => handleDeleteNode(popover.nodeId)}
-            onClose={() => setPopover(null)}
-          />
-        </div>
+        isMobile ? (
+          <div className="fixed inset-0 z-30 flex items-end">
+            <NodePopover
+              key={popover.nodeId}
+              nodeLabel={popover.label}
+              trackId={popover.nodeId}
+              isSeed={popover.isSeed}
+              loading={loading}
+              onExpand={handleExpand}
+              onDelete={() => handleDeleteNode(popover.nodeId)}
+              onClose={() => setPopover(null)}
+              mobile
+            />
+          </div>
+        ) : (
+          <div
+            className="fixed z-30"
+            style={{
+              left: Math.min(popover.x, window.innerWidth - 320),
+              top: Math.min(popover.y, window.innerHeight - 400),
+            }}
+          >
+            <NodePopover
+              key={popover.nodeId}
+              nodeLabel={popover.label}
+              trackId={popover.nodeId}
+              isSeed={popover.isSeed}
+              loading={loading}
+              onExpand={handleExpand}
+              onDelete={() => handleDeleteNode(popover.nodeId)}
+              onClose={() => setPopover(null)}
+            />
+          </div>
+        )
       )}
 
       {error && (

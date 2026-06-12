@@ -2,16 +2,22 @@ import { useEffect, useRef, useState } from "react";
 import { searchSongs } from "../api";
 import type { SongSearchResult } from "../types";
 import { Spinner } from "./Loader";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 type Props = {
   onPick: (song: SongSearchResult) => void;
   placeholder?: string;
+  /** Shorter placeholder used on small screens, where the full one truncates. */
+  placeholderShort?: string;
   autoFocus?: boolean;
   dropUp?: boolean;
   disabled?: boolean;
 };
 
-export function SearchBar({ onPick, placeholder, autoFocus, dropUp = false, disabled = false }: Props) {
+export function SearchBar({ onPick, placeholder, placeholderShort, autoFocus, dropUp = false, disabled = false }: Props) {
+  const isMobile = useIsMobile();
+  const resolvedPlaceholder =
+    isMobile && placeholderShort ? placeholderShort : (placeholder ?? "Search for a song…");
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SongSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -70,9 +76,9 @@ export function SearchBar({ onPick, placeholder, autoFocus, dropUp = false, disa
           value={q}
           onChange={(e) => !disabled && setQ(e.target.value)}
           onFocus={() => !disabled && results.length > 0 && setOpen(true)}
-          placeholder={disabled ? "Building your graph…" : (placeholder ?? "Search for a song…")}
+          placeholder={disabled ? "Building your graph…" : resolvedPlaceholder}
           disabled={disabled}
-          className="relative w-full bg-transparent h-[48px] px-5 pr-12 text-[14px] text-[#3a3a3a] placeholder:text-[#8a8a8a] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+          className="relative w-full bg-transparent h-[52px] sm:h-[48px] px-5 pr-12 text-[16px] sm:text-[14px] text-[#3a3a3a] placeholder:text-[#8a8a8a] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
         />
         {loading && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">

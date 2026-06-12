@@ -110,6 +110,9 @@ html, body, #root {
 .popover-in  { animation: popover-in 220ms var(--ease-out) both; }
 .popover-out { animation: popover-out 150ms var(--ease-in-out) both; }
 
+/* The mobile node-sheet slides via inline transform/transition in NodePopover
+   (so the grab handle can be dragged), not a keyframe — see useHandle* there. */
+
 /* Landing scroll cue — gentle bobbing down arrow */
 @keyframes scroll-bob {
   0%, 100% { transform: translateY(0); }

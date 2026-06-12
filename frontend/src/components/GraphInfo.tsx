@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getDominantTags } from "../api";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 type Tag = { tag: string; weight: number; count: number; share: number };
 
@@ -44,6 +45,11 @@ function Stat({ label, value }: { label: string; value: number }) {
 export function GraphInfo({ nodeCount, edgeCount, trackIds }: Props) {
   const [tags, setTags] = useState<Tag[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
+  const isMobile = useIsMobile();
+  // On phones the panel starts collapsed to a compact chip so it doesn't eat
+  // half the screen; tapping the header expands the full stats + tags.
+  const [open, setOpen] = useState(false);
+  const expanded = !isMobile || open;
 
   // Stable string key so the effect only fires when node IDs change,
   // not on every position tick (which creates a new trackIds reference).
@@ -81,8 +87,13 @@ export function GraphInfo({ nodeCount, edgeCount, trackIds }: Props) {
     <div className="relative overflow-hidden rounded-[15px] shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)]">
       <div aria-hidden className="absolute inset-0 backdrop-blur-[2.5px] bg-white/75 rounded-[15px] pointer-events-none" />
       <div aria-hidden className="absolute inset-0 pointer-events-none rounded-[15px] shadow-[inset_0px_4px_4px_0px_rgba(255,255,255,0.25)]" />
-      <div className="relative flex flex-col gap-4 p-5 w-[200px]">
-        <div className="flex items-center gap-2">
+      <div className="relative flex flex-col p-5 w-[200px]">
+        <button
+          type="button"
+          onClick={() => isMobile && setOpen((o) => !o)}
+          aria-expanded={expanded}
+          className={`flex w-full items-center gap-2 ${isMobile ? "cursor-pointer" : "cursor-default"}`}
+        >
           <svg
             viewBox="0 0 24 24"
             className="w-3.5 h-3.5 text-[#656565] shrink-0"
@@ -91,9 +102,31 @@ export function GraphInfo({ nodeCount, edgeCount, trackIds }: Props) {
           >
             <path d="M18.5 3a2.5 2.5 0 1 1-.912 4.828l-4.556 4.555a5.48 5.48 0 0 1 .936 3.714l2.624.787a2.5 2.5 0 1 1-.575 1.916l-2.623-.788a5.5 5.5 0 0 1-10.39-2.29L3 15.5l.004-.221a5.5 5.5 0 0 1 2.984-4.673L5.2 7.982a2.5 2.5 0 0 1-2.194-2.304L3 5.5l.005-.164a2.5 2.5 0 1 1 4.111 2.071l.787 2.625a5.48 5.48 0 0 1 3.714.936l4.555-4.556a2.5 2.5 0 0 1-.167-.748L16 5.5l.005-.164A2.5 2.5 0 0 1 18.5 3" />
           </svg>
-          <p className="font-display font-medium text-[#656565] text-base leading-none">Graph Info</p>
-        </div>
+          <p className="font-display font-medium text-[#656565] text-base leading-none whitespace-nowrap">Graph Info</p>
+          {isMobile && (
+            <svg
+              viewBox="0 0 24 24"
+              className={`ml-auto w-3.5 h-3.5 text-[#909090] shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden
+            >
+              <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </button>
 
+        {/* Body — animates height via the grid 0fr→1fr trick so expanding on
+            mobile slides open smoothly instead of snapping. Spacing lives inside
+            the clipped wrapper so the collapsed chip keeps its exact height. */}
+        <div
+          className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+            expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+          }`}
+        >
+          <div className="overflow-hidden">
+          <div className="flex flex-col gap-4 pt-4">
         <div className="flex items-stretch gap-4">
           <Stat label="Songs" value={nodeCount} />
           <div aria-hidden className="w-px self-stretch bg-[#656565]/15" />
@@ -133,7 +166,7 @@ export function GraphInfo({ nodeCount, edgeCount, trackIds }: Props) {
                     return (
                       <li key={t.tag} className="flex flex-col gap-1">
                         <div className="flex items-baseline justify-between gap-2">
-                          <span className="capitalize font-medium text-[#656565] text-xs leading-none truncate">
+                          <span className="capitalize font-medium text-[#656565] text-xs leading-normal truncate">
                             {t.tag}
                           </span>
                           <span className="font-medium text-[#909090] text-[10px] leading-none tabular-nums shrink-0">
@@ -154,6 +187,9 @@ export function GraphInfo({ nodeCount, edgeCount, trackIds }: Props) {
             </div>
           </>
         )}
+          </div>
+          </div>
+        </div>
       </div>
     </div>
   );

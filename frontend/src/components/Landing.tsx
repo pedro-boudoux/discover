@@ -59,9 +59,11 @@ export function Landing({ onPick, disabled }: Props) {
       {/* Section 2 — solid white panel for project copy, one viewport tall */}
       <section
         ref={aboutRef}
-        className="relative h-full w-full bg-white flex items-center justify-center"
+        className="relative h-full w-full bg-white flex items-center justify-center px-6 sm:px-8"
       >
-        <p>{about["about"].main}</p>
+        <p className="max-w-prose text-center text-lg sm:text-2xl leading-relaxed text-black/80">
+          {about["about"].main}
+        </p>
       </section>
     </div>
   );

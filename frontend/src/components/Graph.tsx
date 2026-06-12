@@ -73,7 +73,7 @@ export const Graph = forwardRef<GraphHandle, Props>(function Graph({
       maxZoom={1.6}
       onInit={(inst) => { rfInstanceRef.current = inst; }}
     >
-      <Panel position="bottom-left" className="!m-0 !ml-5 !mb-8">
+      <Panel position="bottom-left" className="hidden sm:block !m-0 sm:!ml-5 sm:!mb-8">
         <ZoomControls />
       </Panel>
     </ReactFlow>

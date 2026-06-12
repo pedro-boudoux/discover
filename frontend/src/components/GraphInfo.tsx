@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getDominantTags } from "../api";
 import { useIsMobile } from "../hooks/useIsMobile";
+
+const TIP_WIDTH = 240;
 
 type Tag = { tag: string; weight: number; count: number; share: number };
 
@@ -12,20 +15,85 @@ type Props = {
 
 const SKELETON_WIDTHS = [82, 64, 73, 50];
 
+// Real tooltip: works on hover/focus (desktop) and tap (mobile). Rendered through
+// a portal because the Graph Info panel is `overflow-hidden`, which would clip an
+// in-flow tooltip; the native `title` attribute it replaced never showed on touch.
 function InfoTip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  const place = () => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const margin = 12;
+    // Right-align to the icon, then clamp inside the viewport (panel hugs the
+    // right edge, so the tooltip grows leftward).
+    const left = Math.max(
+      margin,
+      Math.min(r.right - TIP_WIDTH, window.innerWidth - TIP_WIDTH - margin),
+    );
+    setPos({ top: r.bottom + 8, left });
+  };
+
+  const show = () => {
+    place();
+    setOpen(true);
+  };
+  const hide = () => setOpen(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && hide();
+    const onDown = (e: PointerEvent) => {
+      if (btnRef.current && !btnRef.current.contains(e.target as Node)) hide();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("scroll", hide, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("scroll", hide, true);
+    };
+  }, [open]);
+
   return (
-    <button
-      type="button"
-      title={text}
-      aria-label={text}
-      className="text-[#b0b0b0] hover:text-[#656565] transition-colors cursor-help leading-none"
-    >
-      <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 11v5" strokeLinecap="round" />
-        <path d="M12 8h.01" strokeLinecap="round" />
-      </svg>
-    </button>
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label={text}
+        onClick={(e) => {
+          e.stopPropagation();
+          open ? hide() : show();
+        }}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        className="text-[#b0b0b0] hover:text-[#656565] transition-colors cursor-help leading-none"
+      >
+        <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5" strokeLinecap="round" />
+          <path d="M12 8h.01" strokeLinecap="round" />
+        </svg>
+      </button>
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            role="tooltip"
+            style={{ top: pos.top, left: pos.left, width: TIP_WIDTH }}
+            className="fixed z-50 rounded-lg bg-[#2b2b2b] px-3 py-2 text-[11px] leading-snug text-white shadow-lg pointer-events-none"
+          >
+            {text}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 

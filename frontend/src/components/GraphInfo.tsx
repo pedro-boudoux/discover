@@ -9,7 +9,37 @@ type Props = {
   trackIds: string[];
 };
 
-const SKELETON_WIDTHS = [75, 55, 68, 48, 62];
+const SKELETON_WIDTHS = [82, 64, 73, 50];
+
+function InfoTip({ text }: { text: string }) {
+  return (
+    <button
+      type="button"
+      title={text}
+      aria-label={text}
+      className="text-[#b0b0b0] hover:text-[#656565] transition-colors cursor-help leading-none"
+    >
+      <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 11v5" strokeLinecap="round" />
+        <path d="M12 8h.01" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="font-display font-medium text-[#3f3f3f] text-xl leading-none tabular-nums">
+        {value}
+      </span>
+      <span className="font-medium text-[#909090] text-[10px] uppercase tracking-wider leading-none">
+        {label}
+      </span>
+    </div>
+  );
+}
 
 export function GraphInfo({ nodeCount, edgeCount, trackIds }: Props) {
   const [tags, setTags] = useState<Tag[]>([]);
@@ -42,38 +72,88 @@ export function GraphInfo({ nodeCount, edgeCount, trackIds }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idsKey]);
 
+  // Bars are scaled relative to the strongest tag so the list reads as a ranking
+  // even when the top share is modest; the % label still shows the true share.
+  const maxShare = tags.reduce((m, t) => Math.max(m, t.share), 0) || 1;
+  const showTagSection = loadingTags || tags.length > 0;
+
   return (
     <div className="relative overflow-hidden rounded-[15px] shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)]">
       <div aria-hidden className="absolute inset-0 backdrop-blur-[2.5px] bg-white/75 rounded-[15px] pointer-events-none" />
       <div aria-hidden className="absolute inset-0 pointer-events-none rounded-[15px] shadow-[inset_0px_4px_4px_0px_rgba(255,255,255,0.25)]" />
-      <div className="relative flex flex-col gap-[15px] p-5 min-w-[160px]">
-        <p className="font-medium text-[#656565] text-base leading-none">Graph Info</p>
-        <p className="font-medium text-[#656565] text-xs leading-none">Songs: {nodeCount}</p>
-        <p className="font-medium text-[#656565] text-xs leading-none">Edges: {edgeCount}</p>
+      <div className="relative flex flex-col gap-4 p-5 w-[200px]">
+        <div className="flex items-center gap-2">
+          <svg
+            viewBox="0 0 24 24"
+            className="w-3.5 h-3.5 text-[#656565] shrink-0"
+            fill="currentColor"
+            aria-hidden
+          >
+            <path d="M18.5 3a2.5 2.5 0 1 1-.912 4.828l-4.556 4.555a5.48 5.48 0 0 1 .936 3.714l2.624.787a2.5 2.5 0 1 1-.575 1.916l-2.623-.788a5.5 5.5 0 0 1-10.39-2.29L3 15.5l.004-.221a5.5 5.5 0 0 1 2.984-4.673L5.2 7.982a2.5 2.5 0 0 1-2.194-2.304L3 5.5l.005-.164a2.5 2.5 0 1 1 4.111 2.071l.787 2.625a5.48 5.48 0 0 1 3.714.936l4.555-4.556a2.5 2.5 0 0 1-.167-.748L16 5.5l.005-.164A2.5 2.5 0 0 1 18.5 3" />
+          </svg>
+          <p className="font-display font-medium text-[#656565] text-base leading-none">Graph Info</p>
+        </div>
 
-        {loadingTags ? (
-          <div className="flex flex-col gap-2">
-            <p className="font-medium text-[#656565] text-xs leading-none mb-0.5">Dominant Tags:</p>
-            {SKELETON_WIDTHS.map((w, i) => (
-              <div
-                key={i}
-                className="h-2.5 rounded-full bg-[#656565]/20 animate-pulse"
-                style={{ width: `${w}%`, animationDelay: `${i * 80}ms` }}
-              />
-            ))}
-          </div>
-        ) : tags.length > 0 ? (
-          <div className="font-medium text-[#656565] text-xs leading-normal">
-            <p className="mb-2">Dominant Tags:</p>
-            <ul className="list-disc list-inside space-y-1">
-              {tags.map((t) => (
-                <li key={t.tag} className="capitalize">
-                  {t.tag} ({Math.round(t.share * 100)}%)
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
+        <div className="flex items-stretch gap-4">
+          <Stat label="Songs" value={nodeCount} />
+          <div aria-hidden className="w-px self-stretch bg-[#656565]/15" />
+          <Stat label="Edges" value={edgeCount} />
+        </div>
+
+        {showTagSection && (
+          <>
+            <div aria-hidden className="h-px bg-[#656565]/15" />
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-1.5">
+                <p className="font-medium text-[#909090] text-[10px] uppercase tracking-wider leading-none">
+                  Dominant Tags
+                </p>
+                <InfoTip text="Tags come from Last.fm's community — listeners tag each track and artist by hand. We blend the track + artist tags, weight them by how many people applied each, then average across every song on the graph. Any odd or unexpected tags come from Last.fm's data, not from pyo." />
+              </div>
+
+              {loadingTags ? (
+                <ul className="flex flex-col gap-3">
+                  {SKELETON_WIDTHS.map((w, i) => (
+                    <li key={i} className="flex flex-col gap-1.5">
+                      <div
+                        className="h-2.5 rounded-full bg-[#656565]/20 animate-pulse"
+                        style={{ width: `${w}%`, animationDelay: `${i * 80}ms` }}
+                      />
+                      <div
+                        className="h-1.5 rounded-full bg-[#656565]/12 animate-pulse"
+                        style={{ width: `${w * 0.9}%`, animationDelay: `${i * 80}ms` }}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <ul className="flex flex-col gap-2.5">
+                  {tags.map((t) => {
+                    const pct = Math.round(t.share * 100);
+                    return (
+                      <li key={t.tag} className="flex flex-col gap-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="capitalize font-medium text-[#656565] text-xs leading-none truncate">
+                            {t.tag}
+                          </span>
+                          <span className="font-medium text-[#909090] text-[10px] leading-none tabular-nums shrink-0">
+                            {pct}%
+                          </span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-[#656565]/12 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-[#4a90d9]/70 transition-[width] duration-500 ease-out"
+                            style={{ width: `${Math.max((t.share / maxShare) * 100, 6)}%` }}
+                          />
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

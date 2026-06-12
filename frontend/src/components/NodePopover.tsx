@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExpansionMethod, ExpansionParams } from "../types";
 import { DEFAULT_EXPANSION } from "../types";
 import { getCachedSpotifyLink, prefetchSpotifyLink } from "../services/spotifyCache";
 
 // Keep in sync with the .popover-out duration in index.css
 const EXIT_MS = 150;
+// Mobile bottom-sheet slide duration + how far you must drag the handle down
+// before releasing dismisses the sheet (otherwise it snaps back).
+const SHEET_MS = 280;
+const DISMISS_THRESHOLD = 110;
 
 const METHOD_LABELS: Record<ExpansionMethod, string> = {
   recommendations: "MMR",
@@ -33,6 +37,8 @@ type Props = {
   onDelete: () => void;
   onClose: () => void;
   initial?: ExpansionParams;
+  /** Render as a full-width bottom sheet (mobile) instead of a floating card. */
+  mobile?: boolean;
 };
 
 export function NodePopover({
@@ -44,10 +50,28 @@ export function NodePopover({
   onDelete,
   onClose,
   initial,
+  mobile = false,
 }: Props) {
   const [params, setParams] = useState<ExpansionParams>(initial ?? DEFAULT_EXPANSION);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [leaving, setLeaving] = useState(false);
+
+  // ── Mobile bottom-sheet motion (slide in + swipe-the-handle-down to dismiss) ──
+  const [sheetTransform, setSheetTransform] = useState("translateY(100%)");
+  const [backdropOn, setBackdropOn] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const dragStartRef = useRef<number | null>(null);
+  const dragYRef = useRef(0);
+
+  // Slide up from the bottom on mount.
+  useEffect(() => {
+    if (!mobile) return;
+    const id = requestAnimationFrame(() => {
+      setSheetTransform("translateY(0px)");
+      setBackdropOn(true);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [mobile]);
   // Links are prefetched + cached when nodes appear on the graph, so this is
   // usually a synchronous cache hit. The "loading" state only shows on the rare
   // miss (e.g. a node that appeared before its prefetch finished).
@@ -73,14 +97,46 @@ export function NodePopover({
     };
   }, [trackId, cached]);
 
-  // Play the exit animation, then let the parent unmount us.
+  // Play the exit animation, then let the parent unmount us. On mobile the sheet
+  // slides back down (and the backdrop fades) before unmounting.
   const close = useCallback(() => {
     setLeaving((already) => {
       if (already) return already;
-      setTimeout(onClose, EXIT_MS);
+      if (mobile) {
+        setSheetTransform("translateY(100%)");
+        setBackdropOn(false);
+        setTimeout(onClose, SHEET_MS);
+      } else {
+        setTimeout(onClose, EXIT_MS);
+      }
       return true;
     });
-  }, [onClose]);
+  }, [onClose, mobile]);
+
+  // Drag the grab handle down to dismiss; release short of the threshold snaps back.
+  const onHandleTouchStart = useCallback((e: React.TouchEvent) => {
+    dragStartRef.current = e.touches[0].clientY;
+    dragYRef.current = 0;
+    setDragging(true);
+  }, []);
+
+  const onHandleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (dragStartRef.current === null) return;
+    const dy = Math.max(0, e.touches[0].clientY - dragStartRef.current);
+    dragYRef.current = dy;
+    setSheetTransform(`translateY(${dy}px)`);
+  }, []);
+
+  const onHandleTouchEnd = useCallback(() => {
+    if (dragStartRef.current === null) return;
+    dragStartRef.current = null;
+    setDragging(false);
+    if (dragYRef.current > DISMISS_THRESHOLD) {
+      close();
+    } else {
+      setSheetTransform("translateY(0px)");
+    }
+  }, [close]);
 
   // Dismiss on Escape.
   useEffect(() => {
@@ -96,16 +152,49 @@ export function NodePopover({
   }
 
   return (
+    <>
+      {mobile && (
+        <div
+          aria-hidden
+          onClick={close}
+          className="fixed inset-0 bg-black/30"
+          style={{ opacity: backdropOn ? 1 : 0, transition: `opacity ${SHEET_MS}ms var(--ease-out)` }}
+        />
+      )}
     <div
       className={[
-        "relative w-[300px] overflow-hidden rounded-[15px] shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)]",
-        leaving ? "popover-out" : "popover-in",
+        "relative shadow-[0px_1px_4.1px_0px_rgba(0,0,0,0.25)]",
+        mobile
+          ? "w-full max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white/95 backdrop-blur-md"
+          : `w-[300px] overflow-hidden rounded-[15px] ${leaving ? "popover-out" : "popover-in"}`,
       ].join(" ")}
-      style={{ transformOrigin: "top left" }}
+      style={
+        mobile
+          ? {
+              transform: sheetTransform,
+              transition: dragging ? "none" : `transform ${SHEET_MS}ms var(--ease-out)`,
+            }
+          : { transformOrigin: "top left" }
+      }
     >
-      <div aria-hidden className="absolute inset-0 backdrop-blur-[4px] bg-white/[0.88] rounded-[15px] pointer-events-none" />
-      <div aria-hidden className="absolute inset-0 pointer-events-none rounded-[15px] shadow-[inset_0px_4px_4px_0px_rgba(255,255,255,0.25)]" />
-      <div className="relative p-4 text-sm text-[#3a3a3a]">
+      {!mobile && (
+        <>
+          <div aria-hidden className="absolute inset-0 backdrop-blur-[4px] bg-white/[0.88] rounded-[15px] pointer-events-none" />
+          <div aria-hidden className="absolute inset-0 pointer-events-none rounded-[15px] shadow-[inset_0px_4px_4px_0px_rgba(255,255,255,0.25)]" />
+        </>
+      )}
+      {mobile && (
+        <div
+          onTouchStart={onHandleTouchStart}
+          onTouchMove={onHandleTouchMove}
+          onTouchEnd={onHandleTouchEnd}
+          style={{ touchAction: "none" }}
+          className="flex justify-center pt-3 pb-2 cursor-grab active:cursor-grabbing"
+        >
+          <div aria-hidden className="h-1.5 w-10 rounded-full bg-[#cfcfcf]" />
+        </div>
+      )}
+      <div className={`relative p-4 text-sm text-[#3a3a3a] ${mobile ? "pb-[calc(1rem+env(safe-area-inset-bottom))]" : ""}`}>
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="min-w-0">
             <div className="text-[10px] uppercase tracking-widest text-[#8a8a8a] font-medium">
@@ -280,6 +369,7 @@ export function NodePopover({
         </div>
       </div>
     </div>
+    </>
   );
 }
 

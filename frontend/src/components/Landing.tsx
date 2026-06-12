@@ -74,29 +74,29 @@ export function Landing({ onPick, disabled }: Props) {
 
             <div className="flex flex-col gap-4 text-[15px] leading-relaxed text-black/70 sm:text-base">
               <p>
-                pyo (for <span className="italic text-black/80">putting you on</span>) is a music discovery tool I built out of frustration with music algorithms. I found that a lot of the times when I was listening to a song I like I would be recommended something totally unrelated to it afterwards (TLDR: I didn't want to have Drake forced down my throat anymore).
+                pyo (for <span className="italic text-black/80">putting you on</span>) is a music discovery tool I built out of frustration with music algorithms. You know that moment when you're pretty much in flow state on a serious streak of good music and then the algorithm decides its Drake time? Yeah, that's why I made pyo 😭🙏🏼.
               </p>
               <p>
-                Using pyo is quite simple: you give it a song you like, and pyo gives you a graph connecting that song to other similar songs. If you find that you also happen to like one of the recommendations, you can extend your graph so you have more songs like that one, and so on!
+                Using pyo is quite simple: you drop a song you like, and pyo builds a graph connecting it to similar music. Like one of the recommendations? Extend the graph from there and keep going.
               </p>
               <p>
-                If you like pyo and happen to be feeling particularly kind today, feel free to give it a star on{" "}
+                If pyo puts you on to something good, consider giving it a star on&nbsp;
                 <a
                   href="https://github.com/pedro-boudoux/pyo"
                   target="_blank"
                   rel="noreferrer"
                   className="font-medium text-[#4a90d9] underline-offset-2 hover:underline"
                 >
-                  GitHub
+                   GitHub ⭐️
                 </a>
-                , it would be greatly appreciated 😁😁. More technical info about how the pyo algorithm works can also be found there.
+                , it would be greatly appreciated. You can also find a deeper breakdown of how the algorithm works there.
               </p>
             </div>
 
             {/* Contact */}
             <div className="flex flex-col gap-3 pt-2">
               <p className="text-[15px] leading-relaxed text-black/70 sm:text-base">
-                If you'd like to contact me, this is how:
+                Questions or just want to say hi?
               </p>
               <div className="flex flex-wrap gap-2.5">
                 <a
@@ -135,11 +135,16 @@ export function Landing({ onPick, disabled }: Props) {
             </div>
           </div>
 
-          {/* Image */}
-          <div className="order-first flex justify-center md:order-none">
+          {/* Images */}
+          <div className="order-first flex flex-col items-center gap-6 md:order-none">
             <img
               className="h-auto w-full max-w-[360px]"
               src={`${import.meta.env.BASE_URL}images/tiffany-day.png`}
+              alt="Pyo graph example."
+            />
+            <img
+              className="h-auto w-full max-w-[360px]"
+              src={`${import.meta.env.BASE_URL}images/charlie-brown-jr.png`}
               alt="Pyo graph example."
             />
           </div>

@@ -9,7 +9,7 @@ type Props = {
 export function Hero({ onPick, disabled }: Props) {
   return (
     <div
-      className="absolute left-6 right-6 sm:left-[60px] sm:right-auto flex flex-col items-start fade-up"
+      className="absolute left-6 right-6 sm:left-[60px] sm:right-auto z-10 flex flex-col items-start fade-up"
       style={{ top: "38%" }}
     >
       <span

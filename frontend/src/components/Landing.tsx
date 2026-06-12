@@ -36,7 +36,7 @@ export function Landing({ onPick, disabled }: Props) {
           type="button"
           onClick={scrollToAbout}
           aria-label="Scroll down to learn more"
-          className="group absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-black/40 hover:text-black/70 transition-colors"
+          className="group absolute bottom-8 left-1/2 z-0 -translate-x-1/2 flex flex-col items-center gap-2 text-black/40 hover:text-black/70 transition-colors"
         >
           <span className="text-[11px] uppercase tracking-[0.2em] font-medium">
             About

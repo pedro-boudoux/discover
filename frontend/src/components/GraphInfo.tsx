@@ -209,7 +209,9 @@ export function GraphInfo({ nodeCount, edgeCount, trackIds }: Props) {
                 <p className="font-medium text-[#909090] text-[10px] uppercase tracking-wider leading-none">
                   Dominant Tags
                 </p>
-                <InfoTip text="Tags come from Last.fm's community — listeners tag each track and artist by hand. We blend the track + artist tags, weight them by how many people applied each, then average across every song on the graph. Any odd or unexpected tags come from Last.fm's data, not from pyo." />
+                <InfoTip text=
+                         "Tags come from Last.fm's community, listeners tag each track and artist. We blend the track + artist tags, weight them by how many people applied each, then average across every song on the graph. Any odd or unexpected tags come from Last.fm's data, not from pyo."
+                />
               </div>
 
               {loadingTags ? (

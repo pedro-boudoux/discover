@@ -4,7 +4,7 @@ from app.models import (
     GraphTagsRequest, DominantTagsResponse,
 )
 from app.db import get_cursor
-from app.services import lastfm, embeddings, ingest
+from app.services import lastfm, embeddings, ingest, colisten
 from app.config import DEFAULT_K
 
 SEED_SIMILAR_LIMIT = 25
@@ -120,6 +120,7 @@ def add_seed(request: SeedRequest):
     )
 
     similar = lastfm.get_similar_tracks(artist, name, limit=SEED_SIMILAR_LIMIT)
+    colisten.record_edges(artist, name, similar, source="track_similar")
     seen_ids = {c["track_id"] for c in candidates} | {request.track_id}
 
     # Variant dedupe: a clean/explicit/remastered edition of the seed, of an ANN
@@ -176,6 +177,7 @@ def add_seed(request: SeedRequest):
                 continue
 
             cand_similar = lastfm.get_similar_tracks(cand_row["artist"], cand_row["name"], limit=EXPANSION_LIMIT)
+            colisten.record_edges(cand_row["artist"], cand_row["name"], cand_similar, source="track_similar")
             process_similar_tracks(cand_similar)
         except Exception:
             continue
@@ -187,6 +189,7 @@ def add_seed(request: SeedRequest):
     if not candidates:
         for sa in lastfm.get_similar_artists(artist):
             sa_tracks = lastfm.get_artist_top_tracks(sa["artist"], limit=ARTIST_TOPTRACKS_LIMIT)
+            colisten.record_edges(artist, name, sa_tracks, source="artist_similar", weight=sa["match"])
             process_similar_tracks(sa_tracks)
 
     # merge ANN + getSimilar + expansion results, keep top DEFAULT_K by similarity

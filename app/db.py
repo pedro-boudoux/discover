@@ -89,6 +89,24 @@ def init_db():
             )
         """)
 
+        # Co-listening graph (algorithm 2.0, Stage B data collection — issue: hybrid
+        # embedding refactor). Append-only weighted edges harvested from Last.fm
+        # getSimilar at every call site. Deliberately NO foreign key to songs:
+        # getSimilar targets usually aren't embedded yet, and we still want their
+        # edges so the graph densifies ahead of node2vec training. source marks
+        # provenance: 'track_similar' (track.getSimilar) or 'artist_similar'
+        # (artist.getSimilar → top tracks, weighted by the artist match).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS colisten_edges (
+                id              SERIAL PRIMARY KEY,
+                source_track_id TEXT NOT NULL,
+                target_track_id TEXT NOT NULL,
+                weight          FLOAT,
+                source          TEXT,
+                created_at      TIMESTAMPTZ DEFAULT now()
+            )
+        """)
+
     # Migrations — each runs in its own transaction so one failure doesn't block the rest
     _try("ALTER TABLE songs RENAME COLUMN spotify_id TO track_id")
     _try("ALTER TABLE graph_nodes RENAME COLUMN spotify_id TO track_id")
@@ -110,6 +128,12 @@ def init_db():
     _try("CREATE INDEX IF NOT EXISTS idx_songs_embedding ON songs USING hnsw (embedding vector_cosine_ops)")
     _try("CREATE INDEX IF NOT EXISTS idx_songs_canonical_key ON songs(canonical_key)")
     _try("CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_source_target ON graph_edges(source_id, target_id)")
+
+    # Co-listening edges: unique per (source, target, provenance) so recording the
+    # same getSimilar result twice just refreshes the weight (idempotent append).
+    # Lookup index on source for the graph crawl / node2vec walk generation.
+    _try("CREATE UNIQUE INDEX IF NOT EXISTS idx_colisten_edges_unique ON colisten_edges(source_track_id, target_track_id, source)")
+    _try("CREATE INDEX IF NOT EXISTS idx_colisten_edges_source ON colisten_edges(source_track_id)")
 
     # Trigram indexes for fast substring search on the songs cache.
     # Silently skipped if pg_trgm isn't available on the host.

@@ -531,6 +531,24 @@ psql $DATABASE_URL -f migrations/init.sql
 uvicorn app.main:app --reload
 ```
 
+### Testing
+
+- **Unit suite** (`tests/`, mocked seams, no live server/DB) — `make test` / `pytest -q`.
+- **Stress / load** (`tests/stress.py`, drives a *live* server over HTTP) — issue #12.
+  Surfaces latency tails, error rates and DB connection-pool exhaustion under
+  concurrency. Not collected by pytest. Run it:
+  ```bash
+  make stress                                              # local journey (search→seed→recs→…)
+  make stress STRESS_URL=https://pyo-backend.up.railway.app # prod, read-only & safe
+  python -m tests.stress --scenario search --concurrency 25 --duration 15
+  ```
+  **Prod safety:** `POST /graph/seed` and `POST /feedback` mutate graph state, so
+  the harness self-skips them against a non-localhost host unless `--allow-writes`
+  is passed; the default remote scenario is `read-only`. Exits non-zero if any
+  endpoint's error rate exceeds `--fail-error-rate` (default 5%). The
+  `.github/workflows/stress.yml` workflow runs it on demand (Actions tab, defaults
+  to a read-only prod sweep) plus a weekly read-only canary.
+
 ---
 
 ## Deployment (Railway + Neon + GitHub Pages)

@@ -1,0 +1,63 @@
+name: stress
+
+# Load / reliability test of the live API (issue #12). Manual runs via the
+# Actions tab (defaults to a safe read-only sweep of prod), plus a weekly
+# read-only canary that goes red if prod starts erroring or slowing down.
+#
+# Graph-mutating calls (seed / feedback) only fire when allow_writes is true,
+# so the default and scheduled runs never pollute the real graph.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Target API base URL
+        default: https://pyo-backend.up.railway.app
+      scenario:
+        description: Scenario
+        type: choice
+        options: [read-only, journey, write, search, recommend, playlist, seed]
+        default: read-only
+      concurrency:
+        description: Concurrent workers
+        default: "10"
+      duration:
+        description: Duration (seconds)
+        default: "20"
+      allow_writes:
+        description: Permit graph-mutating calls (seed/feedback) against the target
+        type: boolean
+        default: false
+      fail_error_rate:
+        description: Fail if any endpoint's error rate exceeds this (0–1)
+        default: "0.05"
+  schedule:
+    - cron: "0 9 * * 1"   # Mondays 09:00 UTC — weekly read-only canary against prod
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    # Don't let forks fire load at prod.
+    if: github.repository == 'pedro-boudoux/pyo'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run stress test
+        run: |
+          python -m tests.stress \
+            --base-url "${{ github.event.inputs.base_url || 'https://pyo-backend.up.railway.app' }}" \
+            --scenario "${{ github.event.inputs.scenario || 'read-only' }}" \
+            --concurrency "${{ github.event.inputs.concurrency || '10' }}" \
+            --duration "${{ github.event.inputs.duration || '20' }}" \
+            --fail-error-rate "${{ github.event.inputs.fail_error_rate || '0.05' }}" \
+            ${{ github.event.inputs.allow_writes == 'true' && '--allow-writes' || '' }}

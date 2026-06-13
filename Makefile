@@ -8,11 +8,13 @@
 #   make db-down   # stop the DB (keeps data)
 #   make db-reset  # wipe the DB and recreate it from scratch
 #   make test      # run the backend test suite
+#   make stress    # load-test a running API (STRESS_URL=https://... to target prod)
 #   make install   # install backend + frontend dependencies
 
 VENV ?= .venv
+STRESS_URL ?= http://localhost:8000
 
-.PHONY: db db-down db-reset api web test install
+.PHONY: db db-down db-reset api web test stress install
 
 db:
 	docker compose up -d
@@ -34,6 +36,12 @@ web:
 
 test:
 	$(VENV)/bin/pytest -q
+
+# Load test a running server. Targets local by default; override the URL to hit
+# prod (read-only there unless you add --allow-writes), e.g.:
+#   make stress STRESS_URL=https://pyo-backend.up.railway.app
+stress:
+	$(VENV)/bin/python -m tests.stress --base-url $(STRESS_URL) $(STRESS_ARGS)
 
 install:
 	$(VENV)/bin/pip install -r requirements.txt -r requirements-dev.txt

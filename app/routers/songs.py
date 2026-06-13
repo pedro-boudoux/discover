@@ -298,12 +298,20 @@ def backfill_covers(limit: int = Query(default=200, ge=1, le=2000)):
     LIMIT just bounds a single request. Call repeatedly until `remaining` is 0.
     Until a row is backfilled its NULL key simply means "no variant folding" for
     that song, so the system degrades gracefully rather than erroring.
+
+    Pass force=true to RE-key every row (not just NULLs) — needed after the
+    canonical_title rules change, since existing keys were computed under the old
+    rules. With force=true `remaining` always reports 0 (every row is fresh).
 """
 @router.post("/backfill-canonical")
-def backfill_canonical(limit: int = Query(default=1000, ge=1, le=20000)):
+def backfill_canonical(
+    limit: int = Query(default=1000, ge=1, le=20000),
+    force: bool = Query(default=False),
+):
+    where = "" if force else "WHERE canonical_key IS NULL"
     with get_cursor() as cursor:
         cursor.execute(
-            "SELECT track_id, name, artist FROM songs WHERE canonical_key IS NULL LIMIT %s",
+            f"SELECT track_id, name, artist FROM songs {where} LIMIT %s",
             (limit,),
         )
         rows = cursor.fetchall()

@@ -95,10 +95,19 @@ def make_canonical_key(artist: str, track: str) -> str:
     # single/album version, radio edit, mono/stereo, bonus track, trailing feat.
 ```
 
-Deliberately **not** folded: `live`, `acoustic`, `remix`, `demo`, `instrumental`
-— those are sonically distinct recordings (different tags → different vectors →
-legitimately different recs), and numbered/multi-part tracks (`Untitled 02` vs
-`Untitled 03`) stay separate too. `canonical_key` is stored on `songs` and used
+Two classes of qualifier, handled differently in `canonical_title`:
+- **Cosmetic** (clean/explicit/remastered/…) → **stripped**, so variants fold into
+  the base recording.
+- **Variant** (`live`, `acoustic`, `remix`, `demo`, `instrumental`) → **kept
+  distinct** from the studio cut, but **normalized to a `(marker)` token** so
+  different *spellings* of the same variant merge: `Tin Man (Live)`,
+  `Tin man - live` and `Tin Man (Live Version)` all → `tin man (live)`, while
+  `Tin Man` stays separate. Only *generic* markers normalize — a named remixer
+  (`Song (Tiësto Remix)`) or a specific recording (`Song (Live at Wembley)`) keeps
+  its full title and stays distinct. Numbered/multi-part tracks (`Untitled 02` vs
+  `Untitled 03`) are untouched.
+
+`canonical_key` is stored on `songs` and used
 to dedupe at four surfaces: search merge, the recommendation pool + exclusion +
 top-up, and the seed bootstrap pool. `track_id` stays the FK/cache key (no churn);
 `canonical_key` is the "is this the same song?" key. It's nullable — an unset
@@ -343,12 +352,14 @@ POST /songs/backfill-covers?limit={n}
 Maintenance: re-resolve covers for songs with NULL or placeholder images.
 
 ```
-POST /songs/backfill-canonical?limit={n}
+POST /songs/backfill-canonical?limit={n}&force={bool}
 ```
 Maintenance: fill `canonical_key` for rows written before the column existed
 (`canonical_key IS NULL`). Pure string transform, no Last.fm calls — fast. Call
 repeatedly until `remaining` is 0. Until a row is backfilled its NULL key just
-means "no variant folding" for that song (graceful degradation).
+means "no variant folding" for that song (graceful degradation). Pass
+`force=true` (with a `limit` ≥ the song count) to **re-key every row** after the
+`canonical_title` rules change — existing keys were computed under the old rules.
 
 ```
 POST /songs/repack-vocab

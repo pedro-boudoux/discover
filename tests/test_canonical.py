@@ -42,20 +42,33 @@ def test_strips_cosmetic_suffixes(raw, expected):
 
 
 @pytest.mark.parametrize("raw", [
-    "Song (Live)",
-    "Song (Acoustic)",
-    "Song (Remix)",
-    "Song (Demo)",
-    "Song (Instrumental)",
     "Untitled 02",
     "Untitled 03",
     "Pt. 1",
     "Pt. 2",
     "Act II",
+    "Song (Tiesto Remix)",        # named remixer — distinct, not normalized
+    "Song (Live at Wembley)",     # specific recording — distinct, not normalized
 ])
-def test_keeps_sonically_distinct_editions(raw):
-    # These must pass through untouched — they are different recordings/songs.
+def test_keeps_distinct_songs_untouched(raw):
+    # Different songs / specific recordings must pass through untouched.
     assert canonical_title(raw) == raw.strip()
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("Song (Live)", "Song (live)"),
+    ("Song - live", "Song (live)"),
+    ("Song (Live Version)", "Song (live)"),
+    ("Song [Live]", "Song (live)"),
+    ("Song (Acoustic)", "Song (acoustic)"),
+    ("Song (Acoustic Version)", "Song (acoustic)"),
+    ("Song (Remix)", "Song (remix)"),
+    ("Song (Demo)", "Song (demo)"),
+    ("Song (Instrumental)", "Song (instrumental)"),
+])
+def test_normalizes_variant_markers(raw, expected):
+    # Variant markers are kept (distinct from studio) but normalized to one form.
+    assert canonical_title(raw) == expected
 
 
 def test_never_returns_empty():
@@ -83,6 +96,23 @@ def test_numbered_tracks_do_not_collide():
 def test_live_version_is_distinct_from_studio():
     assert make_canonical_key("Radiohead", "Idioteque") != \
         make_canonical_key("Radiohead", "Idioteque (Live)")
+
+
+def test_variant_spellings_merge():
+    # The reported case: three spellings of one live recording fold together,
+    # but stay distinct from the studio cut.
+    live = make_canonical_key("America", "Tin Man (Live)")
+    assert make_canonical_key("America", "Tin man - live") == live
+    assert make_canonical_key("America", "Tin Man (Live Version)") == live
+    assert make_canonical_key("America", "Tin Man [Live]") == live
+    assert make_canonical_key("America", "Tin Man") != live
+
+
+def test_bare_remix_merges_but_named_remixes_stay_distinct():
+    assert make_canonical_key("X", "Song (Remix)") == make_canonical_key("X", "Song - Remix")
+    # A remixer name differentiates genuinely different remixes — keep them apart.
+    assert make_canonical_key("X", "Song (Tiesto Remix)") != \
+        make_canonical_key("X", "Song (Skrillex Remix)")
 
 
 def test_same_title_different_artist_distinct():

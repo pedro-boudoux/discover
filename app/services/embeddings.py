@@ -10,12 +10,19 @@ def make_track_id(artist: str, track: str) -> str:
     return hashlib.sha1(key.encode()).hexdigest()[:20]
 
 
-# Trailing qualifiers that mark the SAME recording with a cosmetic label. Folded
-# into one canonical identity so "Song", "Song (Clean)", "Song (Explicit)" and
-# "Song - Remastered 2011" don't surface as separate tracks in search results or
-# recommendations. Deliberately does NOT include live / acoustic / remix / demo /
-# instrumental: those are sonically distinct recordings with different tags (and
-# therefore different vectors), so they SHOULD stay separate in a discovery tool.
+# Two classes of trailing qualifier, handled differently:
+#
+# 1. COSMETIC (_CANONICAL_STRIP) — same recording, just a label. Stripped away
+#    entirely so "Song", "Song (Clean)", "Song (Explicit)" and
+#    "Song - Remastered 2011" collapse to one identity.
+#
+# 2. VARIANT (_VARIANT_MARKER) — a genuinely different recording (live/acoustic/
+#    remix/demo/instrumental). NOT folded into the studio cut, but normalized to a
+#    canonical token so different *spellings* of the same variant merge:
+#    "Song (Live)", "Song - live" and "Song (Live Version)" → "Song (live)".
+#    Marker must be bare: "Song (Tiësto Remix)" (named remixer) and
+#    "Song (Live at Wembley)" (specific recording) keep their full title and stay
+#    distinct — only generic markers are normalized.
 _CANONICAL_STRIP = re.compile(
     r"\s*[\(\[\-]\s*("
     r"clean|explicit|dirty|"
@@ -27,11 +34,20 @@ _CANONICAL_STRIP = re.compile(
     re.IGNORECASE,
 )
 
+_VARIANT_MARKER = re.compile(
+    r"\s*[\(\[\-]\s*(live|acoustic|remix|demo|instrumental)(?:\s+version)?\s*[\)\]]?\s*$",
+    re.IGNORECASE,
+)
+
 
 def canonical_title(track: str) -> str:
     """
-    Strip cosmetic, same-recording qualifiers from a track title. Applied
-    repeatedly so stacked suffixes ("Song (Remastered) (Bonus Track)") collapse.
+    Normalize a track title to a canonical identity:
+      1. Strip cosmetic, same-recording suffixes (clean/explicit/remastered/...),
+         repeatedly so stacked ones ("Song (Remastered) (Bonus Track)") collapse.
+      2. Normalize a trailing variant marker (live/acoustic/remix/demo/
+         instrumental) to a "(marker)" token so spellings of the same variant
+         merge, while staying distinct from the base recording.
     Never returns empty — if a strip would erase the whole title, the previous
     value is kept (guards against a title that is itself just "(Remastered)").
     """
@@ -41,6 +57,12 @@ def canonical_title(track: str) -> str:
         if stripped == t or not stripped:
             break
         t = stripped
+
+    m = _VARIANT_MARKER.search(t)
+    if m:
+        base = t[: m.start()].strip()
+        if base:
+            t = f"{base} ({m.group(1).lower()})"
     return t
 
 

@@ -122,12 +122,27 @@ def add_seed(request: SeedRequest):
     similar = lastfm.get_similar_tracks(artist, name, limit=SEED_SIMILAR_LIMIT)
     seen_ids = {c["track_id"] for c in candidates} | {request.track_id}
 
+    # Variant dedupe: a clean/explicit/remastered edition of the seed, of an ANN
+    # candidate, or of a song already on the graph shares a canonical_key but not
+    # a track_id — keep only one per canonical identity so the pool (and the edges
+    # we write from it) can't hold the same song twice (issue #11).
+    seen_keys = {embeddings.make_canonical_key(artist, name)}
+    seen_keys |= {embeddings.make_canonical_key(c["artist"], c["name"]) for c in candidates}
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT s.canonical_key FROM graph_nodes gn
+            JOIN songs s ON gn.track_id = s.track_id
+            WHERE s.canonical_key IS NOT NULL
+        """)
+        seen_keys |= {r["canonical_key"] for r in cursor.fetchall()}
+
     def process_similar_tracks(similar_list):
         added = 0
         for sim in similar_list:
             try:
                 sim_id = embeddings.make_track_id(sim["artist"], sim["name"])
-                if sim_id in seen_ids:
+                sim_key = embeddings.make_canonical_key(sim["artist"], sim["name"])
+                if sim_id in seen_ids or sim_key in seen_keys:
                     continue
 
                 song = ingest.embed_and_store_track(sim["artist"], sim["name"])
@@ -137,6 +152,7 @@ def add_seed(request: SeedRequest):
                 similarity = embeddings.cosine_similarity(vector, song["embedding"])
                 candidates.append({"track_id": song["track_id"], "similarity": similarity})
                 seen_ids.add(song["track_id"])
+                seen_keys.add(sim_key)
                 added += 1
             except Exception:
                 continue

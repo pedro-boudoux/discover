@@ -15,6 +15,7 @@ def embed_and_store_track(artist: str, name: str) -> dict | None:
     embedding without duplicating the Last.fm/embedding pipeline.
     """
     track_id = embeddings.make_track_id(artist, name)
+    canonical_key = embeddings.make_canonical_key(artist, name)
 
     with get_cursor() as cursor:
         cursor.execute(
@@ -46,13 +47,14 @@ def embed_and_store_track(artist: str, name: str) -> dict | None:
 
     with get_cursor() as cursor:
         cursor.execute("""
-            INSERT INTO songs (track_id, name, artist, listeners, embedding, image)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO songs (track_id, name, artist, listeners, embedding, image, canonical_key)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (track_id) DO UPDATE SET
                 listeners = EXCLUDED.listeners,
                 embedding = EXCLUDED.embedding,
-                image = COALESCE(EXCLUDED.image, songs.image)
-        """, (track_id, name, artist, info["listeners"], vector, image))
+                image = COALESCE(EXCLUDED.image, songs.image),
+                canonical_key = EXCLUDED.canonical_key
+        """, (track_id, name, artist, info["listeners"], vector, image, canonical_key))
 
     return {
         "track_id": track_id,

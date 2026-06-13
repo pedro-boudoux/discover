@@ -1,4 +1,5 @@
 import hashlib
+import re
 import numpy as np
 from app.db import get_cursor
 from app.config import EMBEDDING_DIM, DEFAULT_K
@@ -6,6 +7,52 @@ from app.config import EMBEDDING_DIM, DEFAULT_K
 
 def make_track_id(artist: str, track: str) -> str:
     key = f"{artist.strip().lower()}|||{track.strip().lower()}"
+    return hashlib.sha1(key.encode()).hexdigest()[:20]
+
+
+# Trailing qualifiers that mark the SAME recording with a cosmetic label. Folded
+# into one canonical identity so "Song", "Song (Clean)", "Song (Explicit)" and
+# "Song - Remastered 2011" don't surface as separate tracks in search results or
+# recommendations. Deliberately does NOT include live / acoustic / remix / demo /
+# instrumental: those are sonically distinct recordings with different tags (and
+# therefore different vectors), so they SHOULD stay separate in a discovery tool.
+_CANONICAL_STRIP = re.compile(
+    r"\s*[\(\[\-]\s*("
+    r"clean|explicit|dirty|"
+    r"remaster(?:ed)?(?:\s*\d{4})?|"
+    r"single version|album version|radio edit|"
+    r"mono|stereo|bonus track|"
+    r"feat\.?.*|ft\.?.*"
+    r")\s*[\)\]]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def canonical_title(track: str) -> str:
+    """
+    Strip cosmetic, same-recording qualifiers from a track title. Applied
+    repeatedly so stacked suffixes ("Song (Remastered) (Bonus Track)") collapse.
+    Never returns empty — if a strip would erase the whole title, the previous
+    value is kept (guards against a title that is itself just "(Remastered)").
+    """
+    t = track.strip()
+    while True:
+        stripped = _CANONICAL_STRIP.sub("", t).strip()
+        if stripped == t or not stripped:
+            break
+        t = stripped
+    return t
+
+
+def make_canonical_key(artist: str, track: str) -> str:
+    """
+    Identity that folds cosmetic variants of one recording together. Mirrors
+    make_track_id but normalizes the title first, so clean/explicit/remastered
+    editions of a song share a key. Used to dedupe search results and to keep
+    variants out of a single recommendation/graph candidate pool — track_id stays
+    the exact-string key (no FK churn), this is the looser "same song?" key.
+    """
+    key = f"{artist.strip().lower()}|||{canonical_title(track).strip().lower()}"
     return hashlib.sha1(key.encode()).hexdigest()[:20]
 
 

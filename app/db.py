@@ -98,11 +98,17 @@ def init_db():
     # up" (NULL) from "looked up, not on Spotify" (set, with spotify_url NULL).
     _try("ALTER TABLE songs ADD COLUMN IF NOT EXISTS spotify_url TEXT")
     _try("ALTER TABLE songs ADD COLUMN IF NOT EXISTS spotify_checked_at TIMESTAMPTZ")
+    # Canonical identity: sha1(artist|||canonical_title) — folds cosmetic variants
+    # (clean/explicit/remastered) of one recording together so they don't dedupe
+    # only against their exact track_id. Nullable: an unset value just behaves like
+    # today (no folding). Backfill existing rows via POST /songs/backfill-canonical.
+    _try("ALTER TABLE songs ADD COLUMN IF NOT EXISTS canonical_key TEXT")
 
     # Ensure unique constraints and indexes exist regardless of how the table was created
     _try("CREATE UNIQUE INDEX IF NOT EXISTS songs_track_id_unique ON songs(track_id)")
     _try("CREATE UNIQUE INDEX IF NOT EXISTS graph_nodes_track_id_unique ON graph_nodes(track_id)")
     _try("CREATE INDEX IF NOT EXISTS idx_songs_embedding ON songs USING hnsw (embedding vector_cosine_ops)")
+    _try("CREATE INDEX IF NOT EXISTS idx_songs_canonical_key ON songs(canonical_key)")
     _try("CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_source_target ON graph_edges(source_id, target_id)")
 
     # Trigram indexes for fast substring search on the songs cache.

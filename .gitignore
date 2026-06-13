@@ -9,3 +9,7 @@ build/
 
 # Hallmark design-skill artifacts
 .hallmark/
+
+.DS_Store
+.idea/
+.claude/

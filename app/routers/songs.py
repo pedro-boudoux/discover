@@ -59,18 +59,28 @@ def _fetch_cached_images(track_ids: list[str]) -> dict[str, str | None]:
 def _upsert_songs(tracks: list[dict]) -> None:
     if not tracks:
         return
-    rows = [(t["track_id"], t["name"], t["artist"], t.get("image")) for t in tracks]
+    rows = [
+        (
+            t["track_id"],
+            t["name"],
+            t["artist"],
+            t.get("image"),
+            emb_service.make_canonical_key(t["artist"], t["name"]),
+        )
+        for t in tracks
+    ]
     with get_cursor() as cursor:
         # COALESCE preserves a previously-cached real cover when the latest
         # lookup returns nothing, so we never regress a known image to NULL.
         cursor.executemany(
             """
-            INSERT INTO songs (track_id, name, artist, image)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO songs (track_id, name, artist, image, canonical_key)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (track_id) DO UPDATE SET
                 name   = EXCLUDED.name,
                 artist = EXCLUDED.artist,
-                image  = COALESCE(EXCLUDED.image, songs.image)
+                image  = COALESCE(EXCLUDED.image, songs.image),
+                canonical_key = EXCLUDED.canonical_key
             """,
             rows,
         )
@@ -100,13 +110,25 @@ def search_songs(q: str = Query(..., min_length=1)):
     for t in lastfm_tracks:
         t["track_id"] = emb_service.make_track_id(t["artist"], t["name"])
 
-    # Merge: Last.fm first (popularity-ranked), then any local-only matches
+    # Merge: Last.fm first (popularity-ranked), then any local-only matches.
+    # Dedupe on both the exact track_id and the canonical_key, so cosmetic
+    # variants of one song (e.g. an Explicit and a Clean version) collapse to the
+    # first/most-popular instance instead of cluttering the dropdown (issue #11).
     seen: set[str] = set()
+    seen_keys: set[str] = set()
     merged: list[dict] = []
-    for t in lastfm_tracks:
-        if t["track_id"] in seen:
-            continue
+
+    def _take(t: dict) -> bool:
+        ck = emb_service.make_canonical_key(t["artist"], t["name"])
+        if t["track_id"] in seen or ck in seen_keys:
+            return False
         seen.add(t["track_id"])
+        seen_keys.add(ck)
+        return True
+
+    for t in lastfm_tracks:
+        if not _take(t):
+            continue
         merged.append({
             "track_id": t["track_id"],
             "name": t["name"],
@@ -114,9 +136,8 @@ def search_songs(q: str = Query(..., min_length=1)):
             "image": t.get("image"),
         })
     for t in local_tracks:
-        if t["track_id"] in seen:
+        if not _take(t):
             continue
-        seen.add(t["track_id"])
         merged.append(t)
 
     merged = merged[:SEARCH_LIMIT]
@@ -269,6 +290,37 @@ def backfill_covers(limit: int = Query(default=200, ge=1, le=2000)):
                 )
                 updated += 1
     return {"checked": len(rows), "updated": updated}
+
+
+"""
+    Backfill canonical_key for songs written before the column existed (NULL key).
+    Each is a pure string transform — no Last.fm calls — so this is fast; the
+    LIMIT just bounds a single request. Call repeatedly until `remaining` is 0.
+    Until a row is backfilled its NULL key simply means "no variant folding" for
+    that song, so the system degrades gracefully rather than erroring.
+"""
+@router.post("/backfill-canonical")
+def backfill_canonical(limit: int = Query(default=1000, ge=1, le=20000)):
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT track_id, name, artist FROM songs WHERE canonical_key IS NULL LIMIT %s",
+            (limit,),
+        )
+        rows = cursor.fetchall()
+
+    if not rows:
+        return {"checked": 0, "updated": 0, "remaining": 0}
+
+    with get_cursor() as cursor:
+        for r in rows:
+            cursor.execute(
+                "UPDATE songs SET canonical_key = %s WHERE track_id = %s",
+                (emb_service.make_canonical_key(r["artist"], r["name"]), r["track_id"]),
+            )
+        cursor.execute("SELECT count(*) AS cnt FROM songs WHERE canonical_key IS NULL")
+        remaining = cursor.fetchone()["cnt"]
+
+    return {"checked": len(rows), "updated": len(rows), "remaining": remaining}
 
 
 """

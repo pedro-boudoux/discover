@@ -60,6 +60,25 @@ def find_neighbors(cursor, embedding, exclude_ids, k, niche, allowed_ids=None):
     return sorted(collected, key=lambda x: x["listeners"] or 0)
 
 
+def dedupe_by_canonical(rows: list[dict]) -> list[dict]:
+    """
+    Drop cosmetic variants (clean/explicit/remastered) that share a canonical
+    identity, keeping the first occurrence. A safety net: the seed and rec paths
+    already dedupe, so a well-built graph won't hold two variants — but a graph
+    built before canonical dedupe existed might, and this keeps those out of the
+    exported playlist (issue #11).
+    """
+    seen_keys = set()
+    out = []
+    for r in rows:
+        ck = emb_service.make_canonical_key(r["artist"], r["name"])
+        if ck in seen_keys:
+            continue
+        seen_keys.add(ck)
+        out.append(r)
+    return out
+
+
 def to_playlist_track(row: dict) -> PlaylistTrack:
     return PlaylistTrack(
         track_id=row["track_id"],
@@ -97,7 +116,7 @@ def linear_playlist(request: LinearPlaylistRequest):
 
     return PlaylistResponse(
         seed_track_id=request.track_id,
-        tracks=[to_playlist_track(t) for t in tracks]
+        tracks=[to_playlist_track(t) for t in dedupe_by_canonical(tracks)]
     )
 
 
@@ -147,5 +166,5 @@ def tree_playlist(request: TreePlaylistRequest):
 
     return PlaylistResponse(
         seed_track_id=request.track_id,
-        tracks=[to_playlist_track(t) for t in playlist]
+        tracks=[to_playlist_track(t) for t in dedupe_by_canonical(playlist)]
     )

@@ -14,7 +14,7 @@ TOPUP_SIMILAR_LIMIT = 30
 TOPUP_ARTIST_TOPTRACKS_LIMIT = 10
 
 
-def topup_from_lastfm(seed_track_id: str, query_embedding: list, exclude_ids: set[str], needed: int) -> list[dict]:
+def topup_from_lastfm(seed_track_id: str, query_embedding: list, exclude_ids: set[str], needed: int, exclude_keys: set[str] = ()) -> list[dict]:
     """
     Fall back to Last.fm when the local DB doesn't hold enough unseen underground
     neighbors to fill k. Pulls the seed's similar tracks, embeds+stores any we
@@ -37,6 +37,7 @@ def topup_from_lastfm(seed_track_id: str, query_embedding: list, exclude_ids: se
 
     added: list[dict] = []
     excluded = set(exclude_ids)
+    excluded_keys = set(exclude_keys)
 
     def absorb(candidates: list[dict]) -> None:
         for cand in candidates:
@@ -44,7 +45,10 @@ def topup_from_lastfm(seed_track_id: str, query_embedding: list, exclude_ids: se
                 return
             try:
                 cand_id = embeddings.make_track_id(cand["artist"], cand["name"])
-                if cand_id in excluded:
+                cand_key = embeddings.make_canonical_key(cand["artist"], cand["name"])
+                # Skip both exact repeats and cosmetic variants (clean/explicit/
+                # remastered) of something already chosen or on the graph.
+                if cand_id in excluded or cand_key in excluded_keys:
                     continue
                 song = ingest.embed_and_store_track(cand["artist"], cand["name"])
                 if song is None:
@@ -58,6 +62,7 @@ def topup_from_lastfm(seed_track_id: str, query_embedding: list, exclude_ids: se
                     "similarity": round(embeddings.cosine_similarity(query_embedding, song["embedding"]), 3),
                 })
                 excluded.add(cand_id)
+                excluded_keys.add(cand_key)
             except Exception:
                 continue
 
@@ -111,11 +116,35 @@ def get_recommendations(
     steered_embedding = steering.apply_steering(base_embedding, track_id)
     exclude_ids = list({track_id, *exclude})
 
+    # A clean/explicit/remastered variant of the seed, or of anything the caller
+    # already has (the `exclude` ids), shares its canonical_key but not its
+    # track_id — so it slips past exclude_ids and the near-identical vector ranks
+    # it at the very top. Fold those canonical keys in, then dedupe the pool so
+    # two variants can't both be recommended (issue #11).
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT canonical_key FROM songs WHERE track_id = ANY(%s) AND canonical_key IS NOT NULL",
+            (exclude_ids,),
+        )
+        excluded_keys = {r["canonical_key"] for r in cursor.fetchall()}
+
     pool = embeddings.ann_search(
         steered_embedding,
         exclude_ids=exclude_ids,
         limit=k * MMR_POOL_MULTIPLIER,
     )
+
+    # Collapse cosmetic variants: the pool is similarity-ordered, so the first
+    # (highest-ranked) instance of each canonical identity wins and the rest drop.
+    seen_keys = set(excluded_keys)
+    deduped_pool = []
+    for candidate in pool:
+        ck = embeddings.make_canonical_key(candidate["artist"], candidate["name"])
+        if ck in seen_keys:
+            continue
+        seen_keys.add(ck)
+        deduped_pool.append(candidate)
+    pool = deduped_pool
 
     artist_counts: dict[str, int] = {}
     capped_pool = []
@@ -142,8 +171,11 @@ def get_recommendations(
     # mostly already explored. Top up with fresh candidates from Last.fm.
     if len(reranked) < k:
         already = {r["track_id"] for r in reranked} | set(exclude_ids)
+        already_keys = seen_keys | {
+            embeddings.make_canonical_key(r["artist"], r["name"]) for r in reranked
+        }
         reranked.extend(
-            topup_from_lastfm(track_id, steered_embedding, already, k - len(reranked))
+            topup_from_lastfm(track_id, steered_embedding, already, k - len(reranked), already_keys)
         )
 
     recommendations = [

@@ -11,11 +11,15 @@ CREATE TABLE IF NOT EXISTS songs (
     embedding  vector(300),
     spotify_url        TEXT,         -- cached open.spotify.com link
     spotify_checked_at TIMESTAMPTZ,  -- when we last resolved it (NULL = never)
+    canonical_key      TEXT,         -- sha1(artist|||canonical_title): folds cosmetic variants
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_songs_embedding
     ON songs USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS idx_songs_canonical_key
+    ON songs(canonical_key);
 
 CREATE INDEX IF NOT EXISTS idx_songs_name_trgm
     ON songs USING gin (name gin_trgm_ops);

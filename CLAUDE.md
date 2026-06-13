@@ -79,6 +79,32 @@ This means the same song always resolves to the same id regardless of where it
 entered the system (search, seed bootstrap, recommendation top-up, playlist
 expansion), which is what lets all those paths dedupe against each other.
 
+### Canonical key (cosmetic-variant folding)
+
+`track_id` keys the *exact* title string, so "Song", "Song (Clean)", "Song
+(Explicit)" and "Song - Remastered 2011" each get a **different** id and slip
+past every track_id-based dedupe — and because variants share tags, their vectors
+are near-identical, so the duplicate ranks at the very top of recommendations.
+To collapse them there's a second, looser identity (issue #11):
+
+```python
+# app/services/embeddings.py
+def make_canonical_key(artist: str, track: str) -> str:
+    # sha1(artist|||canonical_title(track)) — canonical_title strips ONLY
+    # same-recording cosmetic suffixes: clean/explicit/dirty, remastered[ YYYY],
+    # single/album version, radio edit, mono/stereo, bonus track, trailing feat.
+```
+
+Deliberately **not** folded: `live`, `acoustic`, `remix`, `demo`, `instrumental`
+— those are sonically distinct recordings (different tags → different vectors →
+legitimately different recs), and numbered/multi-part tracks (`Untitled 02` vs
+`Untitled 03`) stay separate too. `canonical_key` is stored on `songs` and used
+to dedupe at four surfaces: search merge, the recommendation pool + exclusion +
+top-up, and the seed bootstrap pool. `track_id` stays the FK/cache key (no churn);
+`canonical_key` is the "is this the same song?" key. It's nullable — an unset
+value simply means "no folding" for that row (graceful), backfilled via
+`POST /songs/backfill-canonical`.
+
 ---
 
 ## How it works
@@ -226,12 +252,14 @@ CREATE TABLE songs (
     embedding  vector(300),
     spotify_url        TEXT,           -- cached open.spotify.com link (NULL = none)
     spotify_checked_at TIMESTAMPTZ,    -- when we resolved it (NULL = never looked up)
+    canonical_key      TEXT,           -- sha1(artist|||canonical_title): folds cosmetic variants (issue #11)
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE INDEX ON songs USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX ON songs USING gin (name gin_trgm_ops);
 CREATE INDEX ON songs USING gin (artist gin_trgm_ops);
+CREATE INDEX ON songs (canonical_key);   -- variant-folding dedupe lookups
 
 CREATE TABLE tag_vocab (
     id  SERIAL PRIMARY KEY,   -- id == this tag's dimension in the embedding
@@ -313,6 +341,14 @@ pipeline, stores it, and returns it.
 POST /songs/backfill-covers?limit={n}
 ```
 Maintenance: re-resolve covers for songs with NULL or placeholder images.
+
+```
+POST /songs/backfill-canonical?limit={n}
+```
+Maintenance: fill `canonical_key` for rows written before the column existed
+(`canonical_key IS NULL`). Pure string transform, no Last.fm calls — fast. Call
+repeatedly until `remaining` is 0. Until a row is backfilled its NULL key just
+means "no variant folding" for that song (graceful degradation).
 
 ```
 POST /songs/repack-vocab

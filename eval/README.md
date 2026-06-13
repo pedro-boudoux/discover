@@ -11,8 +11,22 @@ compare against the committed baseline JSON.
 
 Runs in-process against the live pipeline, so it needs the same environment as the
 app: `DATABASE_URL` reachable (with the `songs` data) and `LASTFM_API_KEY` set (for
-building the ground truth only — `run_eval` itself does not call Last.fm beyond the
-rec pipeline's own top-up). No extra dependencies beyond the app's.
+building the ground truth). No extra dependencies beyond the app's.
+
+> **Read-only by default — safe against prod.** `run_eval` disables the Last.fm
+> top-up, which is the only write path in the rec pipeline (it embeds new songs and
+> records co-listening edges). Disabling it means the eval **never mutates the DB**,
+> so it can be pointed at Neon prod safely. It's also *more correct*: a writing
+> pipeline grows the DB between runs (numbers drift, breaking reproducibility), and
+> the top-up pulls from `track.getSimilar` — our ground-truth source — which would
+> leak the answers into the recommendations and inflate recall. Pass `--with-topup`
+> to run the full writing pipeline (local/throwaway DBs only).
+
+To run against Neon, set the connection string for the invocation, e.g.:
+
+```bash
+DATABASE_URL="postgresql://...neon..." python -m eval.run_eval --model current --out eval/baselines/sparse_tag_baseline.json
+```
 
 ## 1. Build the ground truth (once, cached)
 

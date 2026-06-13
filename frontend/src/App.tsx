@@ -385,11 +385,11 @@ export default function App() {
         <Landing onPick={handleSeed} disabled={!!seedingPhase} />
       )}
 
-      {/* Full-screen frosted overlay while seeding from the hero page */}
+      {/* Full-screen builder overlay while seeding from the hero page */}
       {!hasGraph && seedingPhase && (
         <div className="absolute inset-0 z-50 flex items-center justify-center">
-          <div aria-hidden className="absolute inset-0 backdrop-blur-sm bg-black/20 pointer-events-none" />
-          <div className="relative">
+          <div aria-hidden className="seed-scrim absolute inset-0 backdrop-blur-md pointer-events-none" />
+          <div className="relative fade-up">
             <SeedingStatus phase={seedingPhase} />
           </div>
         </div>
